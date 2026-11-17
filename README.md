@@ -1,5 +1,21 @@
 # GOODBYE LUMI
 
+<p align="center">
+  <a href="https://5hyuns.github.io/goodbye-lumi/"><img src="https://5hyuns.github.io/goodbye-lumi/img/hero.jpg" alt="GOODBYE LUMI: LUMI leads the way down a corridor toward a door" width="100%"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/5hyuns/goodbye-lumi/releases/tag/v1.0"><img src="https://img.shields.io/badge/Download-Windows%20%C2%B7%20v1.0-e6a74a?style=for-the-badge&logo=github&logoColor=white" alt="Download for Windows, v1.0"></a>
+  <a href="https://5hyuns.github.io/goodbye-lumi/"><img src="https://img.shields.io/badge/Making--of-How%20it%20was%20made-7fd4d8?style=for-the-badge&logo=bookstack&logoColor=white" alt="Making-of: how it was made"></a>
+</p>
+
+<p align="center">
+  <a href="https://5hyuns.github.io/goodbye-lumi/"><img src="https://img.shields.io/badge/English-2a2c32?style=flat-square" alt="English"></a>
+  <a href="https://5hyuns.github.io/goodbye-lumi/ko.html"><img src="https://img.shields.io/badge/%ED%95%9C%EA%B5%AD%EC%96%B4-2a2c32?style=flat-square" alt="한국어"></a>
+  <a href="https://5hyuns.github.io/goodbye-lumi/ja.html"><img src="https://img.shields.io/badge/%E6%97%A5%E6%9C%AC%E8%AA%9E-2a2c32?style=flat-square" alt="日本語"></a>
+  <a href="https://5hyuns.github.io/goodbye-lumi/ru.html"><img src="https://img.shields.io/badge/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-2a2c32?style=flat-square" alt="Русский"></a>
+</p>
+
 **Winner, 1.44 MB Game Dev Contest 2026.**
 
 A first-person sci-fi horror shooter that fits on a floppy disk. The whole
@@ -15,6 +31,18 @@ else evacuated. LUMI, the ship's maintenance drone, has been waiting all that
 time for someone to answer. Five of the six escape bays are already empty.
 Fight through the dark, recover three energy packs and power up the last
 capsule before the ship, or LUMI, runs out.
+
+## How it was made
+
+GOODBYE LUMI was made by a 3D designer who cannot read or write code. The
+whole game was built by giving AI instructions in plain words, and the code
+was never opened along the way. From the first plan to the contest entry
+took about a week. The [making-of](https://5hyuns.github.io/goodbye-lumi/)
+shows how LUMI, the ship, its textures and its props came together, with
+figures you can play with, in English,
+[한국어](https://5hyuns.github.io/goodbye-lumi/ko.html),
+[日本語](https://5hyuns.github.io/goodbye-lumi/ja.html) and
+[Русский](https://5hyuns.github.io/goodbye-lumi/ru.html).
 
 ## Features
 
