@@ -1,0 +1,1714 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Procedural Viewmodel — Rotary Cannon</title>
+<style>
+  html,body{margin:0;height:100%;background:#05060a;overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#7c8790}
+  canvas{display:block;width:100vw;height:100vh;cursor:crosshair}
+  .panel{position:fixed;font-size:11px;line-height:1.7;letter-spacing:.02em;
+    pointer-events:none;text-shadow:0 1px 2px #000}
+  #keys{left:14px;bottom:12px}
+  #keys b{color:#c8d2d8;font-weight:500}
+  #stat{right:14px;top:12px;text-align:right;color:#4d5860}
+  #stat em{color:#9aa6ad;font-style:normal}
+  #start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(60% 60% at 50% 45%,#0b0f16 0%,#04050a 100%);
+    color:#8d99a1;font-size:13px;letter-spacing:.06em;cursor:pointer;z-index:5}
+  #start span{border:1px solid #1d242e;padding:14px 26px}
+  #tune{position:fixed;right:14px;top:96px;width:232px;z-index:4;
+    background:rgba(7,9,13,.86);border:1px solid #1c232d;padding:11px 12px 13px;
+    font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#8d99a1}
+  #tune h4{margin:0 0 9px;font-size:11px;font-weight:500;color:#c8d2d8;letter-spacing:.04em}
+  #tune .row{margin:0 0 7px}
+  #tune .lab{display:flex;justify-content:space-between;color:#6f7c85}
+  #tune .lab i{font-style:normal;color:#a9b4bb}
+  #tune input[type=range]{width:100%;height:14px;margin:1px 0 0;accent-color:#c8813f}
+  #tune input[type=color]{width:100%;height:20px;padding:0;border:1px solid #232b36;background:none}
+  #tune .hint{margin-top:9px;color:#525d66}
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0"></canvas>
+<div class="panel" id="keys">
+  <b>드래그</b> 시점 &nbsp; <b>휠</b> 줌 &nbsp; <b>Space</b> 발사 &nbsp; <b>T</b> 턴테이블 &nbsp; <b>H</b> 손 표시<br>
+  <b>Q</b> 무기 교체 &nbsp; <b>R</b> 재장전 &nbsp; <b>V</b> 스튜디오 &#8644; 1인칭 &nbsp; <b>C</b> 시점 리셋 &nbsp; <span style="color:#4d5860">1인칭: WASD 이동</span><br>
+  <b>1-5</b> 디버그 뷰 (최종 / 알베도 / 노멀 / 러프니스 / AO) &nbsp; <b>B</b> 텍스처 재생성 &nbsp; <b>G</b> 총기 재생성<br>
+  <span id="hint" style="color:#b08a5a"></span>
+</div>
+<div class="panel" id="stat"></div>
+<div id="tune"></div>
+<div id="start"><span>클릭해서 시작</span></div>
+
+<script>
+"use strict";
+addEventListener("error",function(e){
+  const s=document.getElementById("start");
+  if(!s)return; s.style.display="flex";
+  s.innerHTML="<span style='max-width:72ch;color:#c07a7a;line-height:1.8'>오류: "+
+    ((e.message||e)+"")+"</span>";
+});
+/* =========================================================================
+   절차적 1인칭 무기 — 메시 생성 / 노멀맵 생성 / PBR
+   외부 에셋 0개. 모든 지오메트리와 모든 텍스처는 실행 시점에 코드로 생성.
+   ========================================================================= */
+
+/* ---------------------------------------------------------------- 수학 */
+function mI(){return new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);}
+function mMul(a,b){const o=new Float32Array(16);
+  for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;
+    for(let k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k];o[c*4+r]=s;}return o;}
+function mT(x,y,z){const m=mI();m[12]=x;m[13]=y;m[14]=z;return m;}
+function mRX(a){const c=Math.cos(a),s=Math.sin(a),m=mI();m[5]=c;m[6]=s;m[9]=-s;m[10]=c;return m;}
+function mRY(a){const c=Math.cos(a),s=Math.sin(a),m=mI();m[0]=c;m[2]=-s;m[8]=s;m[10]=c;return m;}
+function mRZ(a){const c=Math.cos(a),s=Math.sin(a),m=mI();m[0]=c;m[1]=s;m[4]=-s;m[5]=c;return m;}
+function mPersp(f,a,n,fa){const t=1/Math.tan(f/2);return new Float32Array(
+  [t/a,0,0,0, 0,t,0,0, 0,0,(fa+n)/(n-fa),-1, 0,0,2*fa*n/(n-fa),0]);}
+function mInvRigid(m){const o=mI();
+  o[0]=m[0];o[1]=m[4];o[2]=m[8]; o[4]=m[1];o[5]=m[5];o[6]=m[9]; o[8]=m[2];o[9]=m[6];o[10]=m[10];
+  const x=m[12],y=m[13],z=m[14];
+  o[12]=-(o[0]*x+o[4]*y+o[8]*z); o[13]=-(o[1]*x+o[5]*y+o[9]*z); o[14]=-(o[2]*x+o[6]*y+o[10]*z);
+  return o;}
+function m3of(m){return new Float32Array([m[0],m[1],m[2],m[4],m[5],m[6],m[8],m[9],m[10]]);}
+function xf(m,p){const x=p[0],y=p[1],z=p[2];
+  return [m[0]*x+m[4]*y+m[8]*z+m[12], m[1]*x+m[5]*y+m[9]*z+m[13], m[2]*x+m[6]*y+m[10]*z+m[14]];}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ------------------------------------------------- 메시 빌더 (면 수집) */
+let CM = mI();               // 현재 변환
+const XSTACK = [];
+function push(m){XSTACK.push(CM);CM=mMul(CM,m);}
+function pop(){CM=XSTACK.pop();}
+
+function newB(){return {v:[],t:[],m:[]};}   // 삼각형당 9 / 6 / 1
+function tri(B,a,b,c,ta,tb,tc,mat){
+  const A=xf(CM,a),Bp=xf(CM,b),C=xf(CM,c);
+  B.v.push(A[0],A[1],A[2],Bp[0],Bp[1],Bp[2],C[0],C[1],C[2]);
+  B.t.push(ta[0],ta[1],tb[0],tb[1],tc[0],tc[1]);
+  B.m.push(mat);
+}
+function quad(B,a,b,c,d,ta,tb,tc,td,mat,flip){
+  if(flip){tri(B,a,d,c,ta,td,tc,mat);tri(B,a,c,b,ta,tc,tb,mat);}
+  else {tri(B,a,b,c,ta,tb,tc,mat);tri(B,a,c,d,ta,tc,td,mat);}
+}
+
+/* 링(같은 길이의 점 배열) 목록을 이어 붙여 표면 생성 */
+function loft(B,rings,mat,ts,opt){
+  opt=opt||{};
+  const n=rings[0].length, R=rings.length, flip=!!opt.flip;
+  for(let k=1;k<R;k++) if(rings[k].length!==n)
+    throw new Error("loft: 링 점 개수 불일치 ("+n+" vs "+rings[k].length+") — resample() 로 맞추세요");
+  // u : 링 둘레 누적 길이, v : 링 사이 평균 이동 거리 누적
+  const us=[0];
+  for(let i=1;i<=n;i++){const a=rings[0][(i-1)%n],b=rings[0][i%n];
+    us.push(us[i-1]+Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]));}
+  const vs=[0];
+  for(let k=1;k<R;k++){let s=0;
+    for(let i=0;i<n;i++){const a=rings[k-1][i],b=rings[k][i];
+      s+=Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]);}
+    vs.push(vs[k-1]+Math.max(s/n,1e-4));}
+  for(let k=0;k<R-1;k++)for(let i=0;i<n;i++){
+    const j=(i+1)%n;
+    quad(B,rings[k][i],rings[k][j],rings[k+1][j],rings[k+1][i],
+      [us[i]*ts,vs[k]*ts],[us[i+1]*ts,vs[k]*ts],
+      [us[i+1]*ts,vs[k+1]*ts],[us[i]*ts,vs[k+1]*ts],mat,flip);
+  }
+  if(opt.capStart)cap(B,rings[0],mat,ts,!flip);
+  if(opt.capEnd)cap(B,rings[R-1],mat,ts,flip);
+}
+function cap(B,ring,mat,ts,flip){
+  const n=ring.length;let cx=0,cy=0,cz=0;
+  for(const p of ring){cx+=p[0];cy+=p[1];cz+=p[2];}
+  cx/=n;cy/=n;cz/=n;
+  const C=[cx,cy,cz];
+  for(let i=0;i<n;i++){const a=ring[i],b=ring[(i+1)%n];
+    const ua=[a[0]*ts,a[1]*ts],ub=[b[0]*ts,b[1]*ts],uc=[cx*ts,cy*ts];
+    if(flip)tri(B,C,b,a,uc,ub,ua,mat); else tri(B,C,a,b,uc,ua,ub,mat);}
+}
+
+/* 닫힌 폴리곤을 둘레 길이 기준으로 n개 점으로 재샘플링 —
+   점 개수가 다른 단면끼리 로프트할 때 사용 */
+function resample(ring,n){
+  const m=ring.length, cum=[0];
+  for(let i=1;i<=m;i++){const a=ring[(i-1)%m],b=ring[i%m];
+    cum.push(cum[i-1]+Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]));}
+  const total=cum[m], out=[];
+  let seg=0;
+  for(let i=0;i<n;i++){
+    const d=total*i/n;
+    while(seg<m-1&&cum[seg+1]<d)seg++;
+    const t=(d-cum[seg])/Math.max(cum[seg+1]-cum[seg],1e-9);
+    const a=ring[seg%m],b=ring[(seg+1)%m];
+    out.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t]);
+  }
+  return out;
+}
+function ringCircle(cx,cy,z,r,seg){const o=[];
+  for(let i=0;i<seg;i++){const a=i/seg*Math.PI*2;o.push([cx+Math.cos(a)*r,cy+Math.sin(a)*r,z]);}
+  return o;}
+/* 모서리를 깎은 정삼각형 — 정점이 각 총열을 향한다 (6점) */
+function ringTri(cx,cy,z,R,c){
+  const p=[],V=[];
+  for(let i=0;i<3;i++){const a=Math.PI/2+i*2*Math.PI/3;
+    V.push([cx+Math.cos(a)*R,cy+Math.sin(a)*R]);}
+  for(let i=0;i<3;i++){
+    const v=V[i],pv=V[(i+2)%3],nv=V[(i+1)%3];
+    const l1=Math.hypot(pv[0]-v[0],pv[1]-v[1]),l2=Math.hypot(nv[0]-v[0],nv[1]-v[1]);
+    const k1=Math.min(c,l1*0.45)/l1,k2=Math.min(c,l2*0.45)/l2;
+    p.push([v[0]+(pv[0]-v[0])*k1,v[1]+(pv[1]-v[1])*k1,z]);
+    p.push([v[0]+(nv[0]-v[0])*k2,v[1]+(nv[1]-v[1])*k2,z]);
+  }
+  return p;
+}
+function ringRect(cx,cy,z,sx,sy,c){
+  const hx=Math.max(sx/2,1e-4),hy=Math.max(sy/2,1e-4);
+  c=Math.min(c,hx*0.9,hy*0.9);
+  return [[cx-hx+c,cy-hy,z],[cx+hx-c,cy-hy,z],[cx+hx,cy-hy+c,z],[cx+hx,cy+hy-c,z],
+          [cx+hx-c,cy+hy,z],[cx-hx+c,cy+hy,z],[cx-hx,cy+hy-c,z],[cx-hx,cy-hy+c,z]];}
+
+/* 모서리가 깎인 박스 — "네모박스로 보이지 않게" 하는 핵심 프리미티브 */
+function chamferBox(B,cx,cy,cz,sx,sy,sz,c,mat,ts){
+  const hz=sz/2;
+  loft(B,[ringRect(cx,cy,cz-hz,sx-2*c,sy-2*c,c*0.6),
+          ringRect(cx,cy,cz-hz+c,sx,sy,c),
+          ringRect(cx,cy,cz+hz-c,sx,sy,c),
+          ringRect(cx,cy,cz+hz,sx-2*c,sy-2*c,c*0.6)],mat,ts,{capStart:1,capEnd:1});
+}
+/* 회전체 — profile: [r, z, mat?] */
+function lathe(B,cx,cy,profile,seg,mat,ts){
+  for(let i=0;i<profile.length-1;i++){
+    const a=profile[i],b=profile[i+1];
+    const m=(a[2]!==undefined)?a[2]:mat;
+    loft(B,[ringCircle(cx,cy,a[1],a[0],seg),ringCircle(cx,cy,b[1],b[0],seg)],m,ts);
+  }
+}
+
+/* 면 법선/탄젠트 계산 + 각도 기준 스무딩 → 실린더는 매끈, 챔퍼는 각지게 */
+function finalize(B){
+  const nt=B.m.length;
+  const fN=new Float32Array(nt*3), fT=new Float32Array(nt*3), fBt=new Float32Array(nt*3);
+  for(let f=0;f<nt;f++){
+    const o=f*9,u=f*6;
+    const p0=[B.v[o],B.v[o+1],B.v[o+2]],p1=[B.v[o+3],B.v[o+4],B.v[o+5]],p2=[B.v[o+6],B.v[o+7],B.v[o+8]];
+    const e1=[p1[0]-p0[0],p1[1]-p0[1],p1[2]-p0[2]],e2=[p2[0]-p0[0],p2[1]-p0[1],p2[2]-p0[2]];
+    let nx=e1[1]*e2[2]-e1[2]*e2[1],ny=e1[2]*e2[0]-e1[0]*e2[2],nz=e1[0]*e2[1]-e1[1]*e2[0];
+    const l=Math.hypot(nx,ny,nz)||1;fN[f*3]=nx/l;fN[f*3+1]=ny/l;fN[f*3+2]=nz/l;
+    const d1=[B.t[u+2]-B.t[u],B.t[u+3]-B.t[u+1]],d2=[B.t[u+4]-B.t[u],B.t[u+5]-B.t[u+1]];
+    let r=d1[0]*d2[1]-d2[0]*d1[1];
+    let tx,ty,tz,bx,by,bz;
+    if(Math.abs(r)<1e-12){
+      const ax=Math.abs(fN[f*3])<0.9?[1,0,0]:[0,1,0];
+      tx=ax[1]*fN[f*3+2]-ax[2]*fN[f*3+1];ty=ax[2]*fN[f*3]-ax[0]*fN[f*3+2];tz=ax[0]*fN[f*3+1]-ax[1]*fN[f*3];
+      bx=fN[f*3+1]*tz-fN[f*3+2]*ty;by=fN[f*3+2]*tx-fN[f*3]*tz;bz=fN[f*3]*ty-fN[f*3+1]*tx;
+    }else{
+      r=1/r;
+      tx=(e1[0]*d2[1]-e2[0]*d1[1])*r;ty=(e1[1]*d2[1]-e2[1]*d1[1])*r;tz=(e1[2]*d2[1]-e2[2]*d1[1])*r;
+      bx=(e2[0]*d1[0]-e1[0]*d2[0])*r;by=(e2[1]*d1[0]-e1[1]*d2[0])*r;bz=(e2[2]*d1[0]-e1[2]*d2[0])*r;
+    }
+    const tl=Math.hypot(tx,ty,tz)||1;fT[f*3]=tx/tl;fT[f*3+1]=ty/tl;fT[f*3+2]=tz/tl;
+    const bl=Math.hypot(bx,by,bz)||1;fBt[f*3]=bx/bl;fBt[f*3+1]=by/bl;fBt[f*3+2]=bz/bl;
+  }
+  const map=new Map();
+  for(let f=0;f<nt;f++)for(let k=0;k<3;k++){
+    const o=f*9+k*3;
+    const key=(Math.round(B.v[o]*4096))+"|"+(Math.round(B.v[o+1]*4096))+"|"+(Math.round(B.v[o+2]*4096));
+    let a=map.get(key); if(!a){a=[];map.set(key,a);} a.push(f);
+  }
+  const COS=0.64; // 50도
+  const out=new Float32Array(nt*3*13);
+  for(let f=0;f<nt;f++)for(let k=0;k<3;k++){
+    const o=f*9+k*3,u=f*6+k*2;
+    const key=(Math.round(B.v[o]*4096))+"|"+(Math.round(B.v[o+1]*4096))+"|"+(Math.round(B.v[o+2]*4096));
+    const grp=map.get(key);
+    let nx=0,ny=0,nz=0,tx=0,ty=0,tz=0;
+    for(const g of grp){
+      const d=fN[g*3]*fN[f*3]+fN[g*3+1]*fN[f*3+1]+fN[g*3+2]*fN[f*3+2];
+      if(d>COS){nx+=fN[g*3];ny+=fN[g*3+1];nz+=fN[g*3+2];tx+=fT[g*3];ty+=fT[g*3+1];tz+=fT[g*3+2];}
+    }
+    let l=Math.hypot(nx,ny,nz)||1;nx/=l;ny/=l;nz/=l;
+    // 그람-슈미트
+    const dt=tx*nx+ty*ny+tz*nz;tx-=nx*dt;ty-=ny*dt;tz-=nz*dt;
+    l=Math.hypot(tx,ty,tz);
+    if(l<1e-6){const ax=Math.abs(nx)<0.9?[1,0,0]:[0,1,0];
+      tx=ax[1]*nz-ax[2]*ny;ty=ax[2]*nx-ax[0]*nz;tz=ax[0]*ny-ax[1]*nx;l=Math.hypot(tx,ty,tz)||1;}
+    tx/=l;ty/=l;tz/=l;
+    const cx=ny*tz-nz*ty,cy=nz*tx-nx*tz,cz=nx*ty-ny*tx;
+    const w=(cx*fBt[f*3]+cy*fBt[f*3+1]+cz*fBt[f*3+2])<0?-1:1;
+    const q=(f*3+k)*13;
+    out[q]=B.v[o];out[q+1]=B.v[o+1];out[q+2]=B.v[o+2];
+    out[q+3]=nx;out[q+4]=ny;out[q+5]=nz;
+    out[q+6]=B.t[u];out[q+7]=B.t[u+1];
+    out[q+8]=tx;out[q+9]=ty;out[q+10]=tz;out[q+11]=w;
+    out[q+12]=B.m[f];
+  }
+  return out;
+}
+
+/* ------------------------------------------------------ 총기 어셈블리 */
+/* 머티리얼 ID: 0 판금  1 가공원통  2 도색액센트  3 러버그립  4 발광  5 보어(암부)  6 아머 */
+const TSG=3.2;   // 총기 텍스처 스케일
+const TSB=7.2;   // 몸통 전용 — UV 반복을 늘려 패널/노이즈를 잘게 만든다
+const SEG=20;
+
+function barrelProfile(r,z0,z1,rng){
+  const p=[];
+  p.push([0,z0+0.055,5]);
+  p.push([r*0.44,z0+0.055,5]);
+  p.push([r*0.44,z0,5]);           // 보어 내벽
+  p.push([r*1.34,z0,2]);           // 총구면 (액센트)
+  p.push([r*1.42,z0+0.007,2]);
+  p.push([r*1.42,z0+0.030,2]);
+  p.push([r*1.34,z0+0.037,1]);
+  p.push([r*1.06,z0+0.037,1]);
+  p.push([r*1.06,z0+0.052,1]);
+  p.push([r,z0+0.060,1]);
+  let z=z0+0.060;
+  const n=5,seg=(z1-0.055-z)/n;
+  for(let i=0;i<n;i++){
+    const g=0.55+rng()*0.25;
+    p.push([r,z+seg*g,1]);
+    p.push([r*1.18,z+seg*(g+0.06),1]);
+    p.push([r*1.18,z+seg*(g+0.22),1]);
+    p.push([r,z+seg*(g+0.28),1]);
+    z+=seg;
+  }
+  p.push([r,z1-0.055,1]);
+  p.push([r*1.30,z1-0.048,1]);
+  p.push([r*1.30,z1,1]);
+  p.push([0,z1,1]);
+  return p;
+}
+
+function buildGun(seed){
+  const rng=mulberry32(seed);
+  const S=newB(), P=newB(), Hd=newB();   // S: 고정부, P: 회전부, Hd: 손
+
+  const BR=0.023, OFF=0.036, Z0=-0.68, Z1=-0.055;
+  const RBMAX=BR*1.18, CLR=0.004;            // 냉각링 최대 반경, 여유
+  const CCI=0.036, CCO=0.051;                // 클램프 모서리 챔퍼 (안 / 밖)
+  /* 두 조건의 큰 쪽:
+     ① 인접 변까지  0.5*(RI-OFF)        >= RBMAX+CLR
+     ② 모서리 챔퍼 현까지  RI-0.866*CCI >= OFF+RBMAX+CLR   (챔퍼를 키우면 이쪽이 지배) */
+  const CRI=Math.max(OFF+2.0*(RBMAX+CLR), OFF+RBMAX+CLR+0.866*CCI);
+  const CRO=CRI+0.020;                       // 벽 두께
+  // 3연장 총열 — 정점이 위를 향하도록 90도에서 시작
+  for(let i=0;i<3;i++){
+    const a=Math.PI/2+i*2*Math.PI/3;
+    lathe(P,Math.cos(a)*OFF,Math.sin(a)*OFF,barrelProfile(BR,Z0,Z1,rng),16,1,TSG*1.6);
+  }
+  /* 삼각 클램프 플레이트 — 안팎 모두 삼각형 프레임.
+     안쪽 구멍을 원으로 두면 삼각형 내접원(RO/2)이 구멍보다 커야 해서 플레이트가
+     과하게 커진다. 정점이 총열을 향할 때 총열 중심에서 인접 변까지 거리는
+     0.5*(RI-OFF) 이므로 RI >= OFF + 2*(총열최대반경 + 여유) 가 성립해야 한다. */
+  function clampTri(z,th,accent){
+    const RI=CRI, RO=CRO, CI=CCI, CO=CCO, bev=Math.min(0.014,th*0.35);
+    const z0=z-th/2, z1=z+th/2;
+    const O=(zz,r)=>ringTri(0,0,zz,r,CO), I=(zz,r)=>ringTri(0,0,zz,r,CI);
+    const outer=[O(z0,RO-bev),O(z0+bev,RO),O(z1-bev,RO),O(z1,RO-bev)];
+    const inner=[I(z0,RI+bev),I(z0+bev,RI),I(z1-bev,RI),I(z1,RI+bev)];
+    const M=accent?2:0;
+    loft(P,outer,M,TSG);                       // 바깥 벽 + 앞뒤 베벨
+    loft(P,inner,0,TSG,{flip:true});           // 안쪽 벽 (법선 뒤집기)
+    loft(P,[inner[0],outer[0]],M,TSG);         // 앞면 (-Z)
+    loft(P,[outer[3],inner[3]],M,TSG);         // 뒷면 (+Z)
+  }
+  clampTri(-0.545,0.040,false);
+  clampTri(-0.300,0.036,true);
+  // 로터 디스크 + 방사형 리브
+  lathe(P,0,0,[[0,-0.118],[0.052,-0.118],[0.072,-0.106],[0.072,-0.062],
+               [0.058,-0.055],[0,-0.055]],SEG,0,TSG);
+  for(let i=0;i<6;i++){
+    const a=Math.PI/2+i/6*Math.PI*2;
+    push(mMul(mRZ(a),mT(0.047,0,-0.118)));
+    chamferBox(P,0,0,0,0.016,0.024,0.014,0.004,rng()>0.65?2:0,TSG*2);
+    pop();
+  }
+
+  // ------ 고정부
+  // 로터 하우징 (앞이 열린 셸)
+  // 앞이 좁아지는 테이퍼 셸 — 총열이 3개로 줄어든 만큼 시작부를 얇게
+  loft(S,[ringCircle(0,0,-0.060,0.070,SEG),ringCircle(0,0,-0.060,0.078,SEG),
+          ringCircle(0,0, 0.030,0.092,SEG),ringCircle(0,0, 0.030,0.082,SEG)],0,TSB);
+  for(let i=0;i<7;i++){ // 배기 루버
+    const a=-0.9+i*0.30;
+    push(mMul(mRZ(a),mT(0,0.085,-0.014)));
+    chamferBox(S,0,0,0,0.030,0.012,0.052,0.003,0,TSG*2);
+    pop();
+  }
+  // 하우징→리시버 전이
+  loft(S,[ringCircle(0,0,0.030,0.092,SEG),
+          resample(ringRect(0,0,0.052,0.176,0.156,0.020),SEG)],0,TSB);
+
+  // 리시버 본체 + 사이드 플레이트
+  chamferBox(S,0,0,0.185,0.176,0.156,0.270,0.018,0,TSB);
+  chamferBox(S,-0.090,0.005,0.190,0.010,0.116,0.200,0.004,0,TSB);
+  chamferBox(S, 0.090,0.005,0.190,0.010,0.116,0.200,0.004,0,TSB);
+  // 상부 레일 + 캐리핸들
+  chamferBox(S,0,0.090,0.170,0.050,0.024,0.230,0.006,0,TSB);
+  for(let i=0;i<6;i++)chamferBox(S,0,0.104,0.075+i*0.038,0.038,0.010,0.020,0.003,0,TSG*2);
+  // 액센트 밴드
+  chamferBox(S,0,0,0.072,0.182,0.162,0.030,0.008,8,TSG);   // 안전 위험표시 띠
+  /* 디지털 탄약 카운터 — 안전띠 위, 리시버 상면 좌측.
+     회전 없이 총기 축에 정렬 (화면 법선 +Z, 사수 쪽을 향한다). */
+  push(mT(-0.064,0.098,0.074));
+  chamferBox(S,0,0,-0.013,0.050,0.034,0.022,0.005,0,TSB);      // 하우징
+  chamferBox(S,0,-0.026,-0.018,0.024,0.020,0.014,0.004,0,TSG); // 마운트 암
+  quad(S,[-0.020,-0.012,0.0012],[0.020,-0.012,0.0012],
+         [0.020, 0.012,0.0012],[-0.020, 0.012,0.0012],
+         [0,0],[1,0],[1,1],[0,1],9);
+  pop();
+  // 발광 상태 스트립
+  chamferBox(S,-0.096,0.030,0.200,0.005,0.014,0.120,0.002,4,TSG);
+  chamferBox(S, 0.096,0.030,0.200,0.005,0.014,0.120,0.002,4,TSG);
+  // 시드 기반 그리블
+  for(let i=0;i<14;i++){
+    const side=rng()<0.5?-1:1;
+    const sx=0.006+rng()*0.008, sy=0.012+rng()*0.040, sz=0.020+rng()*0.060;
+    chamferBox(S,side*0.096,-0.045+rng()*0.09,0.085+rng()*0.20,sx,sy,sz,0.0025,rng()<0.18?2:0,TSG*2);
+  }
+  for(let i=0;i<6;i++){
+    chamferBox(S,-0.05+rng()*0.10,0.081,0.090+rng()*0.20,0.010+rng()*0.02,0.008,0.014+rng()*0.03,0.002,0,TSG*2);
+  }
+  // 탄약 급탄함 + 벨트
+  chamferBox(S,0.128,-0.040,0.235,0.100,0.130,0.150,0.012,0,TSB);
+  chamferBox(S,0.128,-0.040,0.162,0.084,0.110,0.014,0.005,8,TSG);
+  for(let i=0;i<7;i++){
+    const t=i/6;
+    push(mMul(mT(0.075+0.045*t,-0.088+0.024*Math.sin(t*3.1),0.150-0.055*t),mRZ(-0.35+0.5*t)));
+    chamferBox(S,0,0,0,0.014,0.026,0.016,0.003,i%2?2:0,TSG*2);
+    pop();
+  }
+  // 전방 핸드가드
+  chamferBox(S,0,-0.072,-0.290,0.086,0.048,0.170,0.010,0,TSB);
+  for(let i=0;i<5;i++)chamferBox(S,0,-0.098,-0.355+i*0.033,0.062,0.010,0.016,0.003,0,TSG*2);
+  // 그립
+  push(mMul(mT(0,-0.140,0.240),mRX(0.22)));
+  chamferBox(S,0,0,0,0.046,0.135,0.062,0.012,3,TSG*2);
+  pop();
+  chamferBox(S,0,-0.078,0.240,0.056,0.030,0.076,0.010,0,TSB);
+
+  // 손 / 건틀릿 (오른손: 그립, 왼손: 핸드가드)
+  function hand(x,y,z,rot,scale){
+    push(mMul(mMul(mT(x,y,z),mRZ(rot)),mRX(0.15)));
+    chamferBox(Hd,0,-0.055*scale,0.02,0.085*scale,0.105*scale,0.115*scale,0.014,6,TSG);
+    chamferBox(Hd,0,-0.130*scale,0.05,0.078*scale,0.075*scale,0.150*scale,0.012,6,TSG);
+    for(let i=0;i<4;i++)
+      chamferBox(Hd,0,0.020*scale,-0.030+i*0.028,0.090*scale,0.026*scale,0.024,0.006,6,TSG*1.6);
+    chamferBox(Hd,-0.046*scale,-0.006*scale,-0.010,0.020,0.030,0.030,0.006,6,TSG*1.6);
+    pop();
+  }
+  hand(0.0,-0.150,0.245,0.0,1.0);
+  hand(0.0,-0.128,-0.300,0.0,0.92);
+
+  return {stat:finalize(S),spin:finalize(P),hands:finalize(Hd),
+          hmov:finalize(newB()),magm:finalize(newB())};
+}
+
+/* ------------------------------------------------- 탄피 / 탄약 아이템 메시 */
+function buildShell(){
+  const B=newB();
+  lathe(B,0,0,[[0.0086,-0.025],[0.0114,-0.025],[0.0114,0.0132],
+               [0.0134,0.0166],[0.0134,0.0223],[0.0100,0.0252],[0,0.0252]],12,10,28);
+  return finalize(B);
+}
+function buildShotshell(){
+  const B=newB();
+  lathe(B,0,0,[[0.0112,-0.028,11],[0.0138,-0.028,11],[0.0138,0.008,10],
+               [0.0154,0.012,10],[0.0154,0.020,10],[0.0116,0.025,10],[0,0.025,10]],
+        14,11,26);
+  return finalize(B);
+}
+/* 탄약 아이템 — 무기 인덱스별로 액센트 색과 얹힌 탄 모양이 다르다
+   (0 권총 / 1 로터리 캐논 / 2 샷건) */
+function buildPickup(w){
+  const B=newB(), T=3.2, AC=[13,2,11][w];
+  chamferBox(B,0,0,0,0.32,0.21,0.45,0.028,0,T);
+  chamferBox(B,0,0.112,0,0.24,0.036,0.34,0.011,8,T);     // 상면 안전띠
+  chamferBox(B,0,0,0.234,0.26,0.145,0.016,0.006,AC,T);   // 전후면 — 탄종 색
+  chamferBox(B,0,0,-0.234,0.26,0.145,0.016,0.006,AC,T);
+  chamferBox(B,-0.167,0,0,0.016,0.080,0.27,0.005,4,T);   // 측면 발광
+  chamferBox(B, 0.167,0,0,0.016,0.080,0.27,0.005,4,T);
+  if(w===2)                                              // 샷셸
+    for(let i=0;i<3;i++)
+      lathe(B,-0.072+i*0.072,0.152,
+            [[0,-0.098,11],[0.0300,-0.086,11],[0.0300,0.052,11],
+             [0.0330,0.062,10],[0.0330,0.086,10],[0,0.098,10]],12,11,20);
+  else if(w===1)                                         // 라이플탄
+    for(let i=0;i<4;i++)
+      lathe(B,-0.077+i*0.051,0.146,
+            [[0,-0.090],[0.0168,-0.075],[0.0184,0.070],[0,0.090]],12,10,26);
+  else                                                   // 권총탄 (작고 많다)
+    for(let i=0;i<6;i++)
+      lathe(B,-0.088+i*0.035,0.140,
+            [[0,-0.056],[0.0118,-0.046],[0.0128,0.042],[0,0.056]],10,10,34);
+  return finalize(B);
+}
+
+/* ------------------------------------------------ 권총 (초반 무기) */
+function buildPistol(seed){
+  const S=newB(), P=newB(), Hd=newB(), Mg=newB();   // P=슬라이드, Mg=탄창
+  const T=6.0;                                      // 작은 총이라 UV 반복을 촘촘히
+
+  // ---- 슬라이드 (사격 시 후퇴) : 무도장 강판
+  chamferBox(P,0,0.012,-0.045,0.046,0.042,0.250,0.007,14,T);
+  chamferBox(P,0,0.036,-0.045,0.030,0.010,0.230,0.004,14,T);      // 상면 리브
+  for(let i=0;i<5;i++)                                             // 루버
+    chamferBox(P,0.024,0.014,-0.130+i*0.019,0.006,0.024,0.010,0.002,14,T*1.6);
+  for(let i=0;i<5;i++)
+    chamferBox(P,-0.024,0.014,-0.130+i*0.019,0.006,0.024,0.010,0.002,14,T*1.6);
+  chamferBox(P,0.024,0.006,0.030,0.006,0.020,0.070,0.002,5,T);     // 배출구
+  chamferBox(P,0,0.040,-0.158,0.010,0.014,0.016,0.003,14,T*1.6);   // 가늠쇠
+  chamferBox(P,0,0.040,0.062,0.024,0.012,0.012,0.003,14,T*1.6);    // 가늠자
+  for(let i=0;i<4;i++){                                            // 후방 그루브
+    chamferBox(P, 0.024,0.012,0.036+i*0.010,0.005,0.030,0.005,0.0015,14,T*2);
+    chamferBox(P,-0.024,0.012,0.036+i*0.010,0.005,0.030,0.005,0.0015,14,T*2);
+  }
+  lathe(P,0,0.012,[[0,-0.166,5],[0.0090,-0.166,5],[0.0090,-0.176,5],
+                   [0.0150,-0.176,12],[0.0160,-0.170,12],[0.0160,-0.150,12],
+                   [0,-0.150,12]],16,12,40);                       // 총구
+
+  // ---- 프레임 (고정) : 올리브 도장
+  chamferBox(S,0,-0.026,-0.030,0.048,0.038,0.250,0.007,13,T);
+  chamferBox(S,0,-0.040,-0.098,0.044,0.020,0.100,0.005,13,T);
+  // 전방 탄창 하우징 (레퍼런스처럼 방아쇠 앞쪽에 크게)
+  chamferBox(S,0,-0.088,-0.060,0.042,0.098,0.108,0.009,13,T);
+  chamferBox(S,0.022,-0.086,-0.060,0.004,0.070,0.086,0.003,8,T);   // 위험표시 띠
+  chamferBox(S,-0.022,-0.086,-0.060,0.004,0.070,0.086,0.003,8,T);
+  chamferBox(S,0,-0.140,-0.060,0.046,0.014,0.104,0.005,13,T);
+  // 방아쇠울 + 방아쇠
+  chamferBox(S,0,-0.070,0.012,0.030,0.012,0.062,0.005,13,T);
+  chamferBox(S,0,-0.052,0.006,0.010,0.030,0.010,0.003,14,T*1.6);
+  // 그립
+  push(mMul(mT(0,-0.098,0.066),mRX(0.30)));
+  chamferBox(S,0,0,0,0.040,0.118,0.052,0.010,13,T);
+  for(let i=0;i<6;i++)
+    chamferBox(S,0,-0.048+i*0.019,-0.028,0.034,0.008,0.006,0.002,3,T*2);
+  pop();
+  // 후면 패널 + 탄약 게이지 (뒤를 보게 배치 — 1인칭에서 정면으로 읽힌다)
+  chamferBox(S,0,-0.020,0.098,0.044,0.048,0.014,0.006,13,T);
+  {
+    const Z=0.1062, x0=-0.0155, x1=0.0155, y0=-0.0325, y1=-0.0075;
+    chamferBox(S,0,y0-0.004,Z-0.0016,0.040,0.005,0.005,0.0015,14,T*2);
+    chamferBox(S,0,y1+0.004,Z-0.0016,0.040,0.005,0.005,0.0015,14,T*2);
+    chamferBox(S,x0-0.004,-0.020,Z-0.0016,0.005,0.034,0.005,0.0015,14,T*2);
+    chamferBox(S,x1+0.004,-0.020,Z-0.0016,0.005,0.034,0.005,0.0015,14,T*2);
+    quad(S,[x0,y0,Z],[x1,y0,Z],[x1,y1,Z],[x0,y1,Z],[0,0],[1,0],[1,1],[0,1],9);
+  }
+
+  // ---- 탄창 (재장전 시 빠졌다 들어온다)
+  chamferBox(Mg,0,-0.106,-0.060,0.034,0.092,0.094,0.007,13,T);
+  chamferBox(Mg,0,-0.156,-0.060,0.038,0.014,0.098,0.005,14,T);     // 바닥판
+  for(let i=0;i<4;i++)                                             // 창으로 보이는 탄
+    lathe(Mg,0,-0.075-i*0.021,[[0,-0.020],[0.0125,-0.014],[0.0135,0.014],[0,0.020]],
+          12,10,26);
+
+  function hand(TG,x,y,z,sc){
+    push(mMul(mT(x,y,z),mRX(0.15)));
+    chamferBox(TG,0,-0.055*sc,0.02,0.085*sc,0.105*sc,0.115*sc,0.014,6,TSG);
+    chamferBox(TG,0,-0.130*sc,0.05,0.078*sc,0.075*sc,0.150*sc,0.012,6,TSG);
+    for(let i=0;i<4;i++)
+      chamferBox(TG,0,0.020*sc,-0.030+i*0.028,0.090*sc,0.026*sc,0.024,0.006,6,TSG*1.6);
+    chamferBox(TG,-0.046*sc,-0.006*sc,-0.010,0.020,0.030,0.030,0.006,6,TSG*1.6);
+    pop();
+  }
+  hand(Hd,0,-0.112,0.072,0.86);
+  return {stat:finalize(S),spin:finalize(P),hands:finalize(Hd),
+          hmov:finalize(newB()),magm:finalize(Mg)};
+}
+
+/* ------------------------------------------ 샷건 (브레이크 액션 이연장) */
+function buildShotgun(seed){
+  const rng=mulberry32(seed);
+  const S=newB(), P=newB(), Hd=newB(), Hm=newB();  // P/Hm = 총열군 (힌지로 꺾인다)
+  const BX=0.032, Z0=-0.66, ZB=-0.030;             // 총열 간격 / 총구 / 약실 끝
+
+  // 총열 2개 (좌우 나란히)
+  for(const sx of [-BX,BX])
+    lathe(P,sx,0,[[0,Z0+0.050,5],[0.0165,Z0+0.050,5],[0.0165,Z0,5],
+                  [0.0252,Z0,12],[0.0266,Z0+0.009,12],[0.0266,Z0+0.026,12],
+                  [0.0232,Z0+0.036,12],[0.0214,Z0+0.036,12],
+                  [0.0214,-0.120,12],[0.0244,-0.112,12],[0.0244,ZB-0.020,12],
+                  [0.0222,ZB,12],[0,ZB,12]],22,12,TSG*1.6);
+  // 총열 사이를 잇는 얇은 리브만 — 위를 덮지 않아 총열 2개가 그대로 보인다
+  chamferBox(P,0,0,-0.350,0.020,0.032,0.560,0.005,0,TSB);
+  chamferBox(P,0,0.026,Z0+0.048,0.014,0.014,0.022,0.004,0,TSG);   // 가늠쇠
+  // 약실 블록 — 뒤에서 보면 구멍 두 개
+  chamferBox(P,0,0,ZB-0.030,0.104,0.062,0.062,0.011,0,TSB);
+  for(const sx of [-BX,BX])
+    lathe(P,sx,0,[[0,ZB-0.001,5],[0.0170,ZB-0.001,5],[0.0170,ZB-0.030,5]],14,5,40);
+  // 포엔드 (왼손이 잡는 부분)
+  chamferBox(P,0,-0.040,-0.300,0.098,0.058,0.205,0.015,0,TSB);
+  for(let i=0;i<6;i++)
+    chamferBox(P,0,-0.070,-0.378+i*0.031,0.088,0.010,0.017,0.004,0,TSG*2);
+  chamferBox(P,0,-0.040,-0.201,0.104,0.064,0.014,0.005,0,TSG);
+  chamferBox(P,0,-0.040,-0.399,0.104,0.064,0.012,0.005,0,TSG);
+
+  /* ---- 리시버 / 개머리 (고정)
+     각진 박스 + 무작위 그리블 대신, 단면을 점점 바꾸는 로프트 하나로
+     매끄럽게 이어지는 몸통을 만든다. 디테일은 전부 좌우 쌍으로만 붙인다. */
+  const RG=[[-0.030,0.106,0.066,0.022,-0.002],
+            [ 0.004,0.112,0.100,0.032,-0.004],
+            [ 0.050,0.114,0.122,0.040,-0.006],
+            [ 0.118,0.108,0.118,0.040,-0.009],
+            [ 0.182,0.096,0.108,0.037,-0.012],
+            [ 0.242,0.084,0.102,0.034,-0.015],
+            [ 0.298,0.076,0.100,0.032,-0.018],
+            [ 0.348,0.068,0.094,0.028,-0.021]];
+  loft(S,RG.map(r=>ringRect(0,r[4],r[0],r[1],r[2],r[3])),0,TSB,{capStart:1,capEnd:1});
+  chamferBox(S,0,0.0475,-0.022,0.028,0.021,0.044,0.007,0,TSG);     // 개방 레버 (게이지 앞으로)
+  chamferBox(S,0,-0.004,-0.012,0.116,0.106,0.026,0.010,8,TSG);     // 안전띠
+  for(const sd of [-1,1]){                                          // 좌우 대칭 디테일
+    chamferBox(S,sd*0.048,-0.008,0.208,0.008,0.074,0.110,0.007,0,TSB);
+    chamferBox(S,sd*0.054,-0.022,0.078,0.006,0.020,0.124,0.003,0,TSG*2);
+    for(let i=0;i<3;i++)
+      chamferBox(S,sd*0.048,0.012,0.152+i*0.040,0.006,0.011,0.013,0.002,0,TSG*2);
+    chamferBox(S,sd*0.049,-0.002,0.196,0.005,0.011,0.082,0.002,4,TSG);
+  }
+  /* 탄약 게이지 — 회전 없이 상면에 눕힌다. 중앙선에 두어 좌우대칭.
+     받침 패드로 상면 곡률을 메워 평평하게 만든 뒤 그 위에 화면을 얹는다.
+     v 축을 -Z 로 잡아야 위에서 내려다볼 때 숫자가 바로 선다. */
+  chamferBox(S,0,0.0505,0.030,0.050,0.015,0.034,0.006,0,TSB);      // 받침 패드
+  {
+    const Y=0.0582, x0=-0.0205, x1=0.0205, z0=0.019, z1=0.041;
+    chamferBox(S,0,Y-0.0035,z0-0.004,0.050,0.006,0.005,0.0015,0,TSG*2);   // 테두리
+    chamferBox(S,0,Y-0.0035,z1+0.004,0.050,0.006,0.005,0.0015,0,TSG*2);
+    chamferBox(S,x0-0.004,Y-0.0035,0.030,0.005,0.006,0.032,0.0015,0,TSG*2);
+    chamferBox(S,x1+0.004,Y-0.0035,0.030,0.005,0.006,0.032,0.0015,0,TSG*2);
+    quad(S,[x0,Y,z1],[x1,Y,z1],[x1,Y,z0],[x0,Y,z0],
+           [0,0],[1,0],[1,1],[0,1],9);
+  }
+  // 방아쇠울 + 앞뒤 방아쇠 (중앙선) + 그립
+  chamferBox(S,0,-0.068,0.124,0.046,0.026,0.112,0.010,0,TSB);
+  chamferBox(S,0,-0.056,0.106,0.008,0.030,0.015,0.003,0,TSG*2);
+  chamferBox(S,0,-0.056,0.134,0.008,0.030,0.015,0.003,0,TSG*2);
+  push(mMul(mT(0,-0.120,0.222),mRX(0.32)));
+  chamferBox(S,0,0,0,0.046,0.130,0.060,0.013,3,TSG*2);
+  pop();
+
+  function hand(TG,x,y,z,sc){
+    push(mMul(mT(x,y,z),mRX(0.15)));
+    chamferBox(TG,0,-0.055*sc,0.02,0.085*sc,0.105*sc,0.115*sc,0.014,6,TSG);
+    chamferBox(TG,0,-0.130*sc,0.05,0.078*sc,0.075*sc,0.150*sc,0.012,6,TSG);
+    for(let i=0;i<4;i++)
+      chamferBox(TG,0,0.020*sc,-0.030+i*0.028,0.090*sc,0.026*sc,0.024,0.006,6,TSG*1.6);
+    chamferBox(TG,-0.046*sc,-0.006*sc,-0.010,0.020,0.030,0.030,0.006,6,TSG*1.6);
+    pop();
+  }
+  hand(Hd,0,-0.130,0.228,1.0);        // 오른손 — 그립
+  hand(Hm,0,-0.098,-0.298,0.94);      // 왼손 — 총열군과 함께 꺾인다
+  return {stat:finalize(S),spin:finalize(P),hands:finalize(Hd),
+          hmov:finalize(Hm),magm:finalize(newB())};
+}
+
+/* --------------------------------------------------- 스튜디오 그리드 바닥 */
+function buildGrid(){
+  const B=newB(), S=30;
+  quad(B,[-S,0,-S],[S,0,-S],[S,0,S],[-S,0,S],[0,0],[1,0],[1,1],[0,1],7,true);
+  return finalize(B);
+}
+
+/* ---------------------------------------------------------------- WebGL */
+const cv=document.getElementById("c");
+const gl=cv.getContext("webgl2",{antialias:false,powerPreference:"high-performance"});
+if(!gl){document.body.innerHTML="<p style='color:#999;padding:2rem'>WebGL2를 지원하는 브라우저가 필요합니다.</p>";throw 0;}
+
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(s),src);return s;}
+function prog(vs,fs){const p=gl.createProgram();
+  gl.attachShader(p,sh(gl.VERTEX_SHADER,vs));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(p));
+  return p;}
+
+/* ------------------ 공통 노이즈 / 하이트 필드 (텍스처 생성용 GLSL) ---- */
+const NOISE=`
+float hash21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+  float a=hash21(i),b=hash21(i+vec2(1,0)),c=hash21(i+vec2(0,1)),d=hash21(i+vec2(1,1));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+float fbm(vec2 p){float s=0.0,a=0.5;for(int i=0;i<5;i++){s+=a*vnoise(p);p=p*2.03+7.1;a*=0.5;}return s;}
+float sdBox(vec2 p,vec2 b){vec2 d=abs(p)-b;return length(max(d,0.0))+min(max(d.x,d.y),0.0);}
+`;
+
+/* 절차적 하이트필드 → 노멀맵/알베도/러프니스/AO 를 한 번에 생성 (MRT) */
+const GEN_VS=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0,1);}`;
+
+const GEN_FS=`#version 300 es
+precision highp float;
+uniform vec2 uSeed; uniform int uMode; uniform float uRes;
+uniform float uFlat,uMicro,uCells,uRustAmt,uRghBase,uRghVar;
+uniform vec3 uSteel,uRust,uWorn;
+layout(location=0) out vec4 oAlb;
+layout(location=1) out vec4 oNrm;
+layout(location=2) out vec4 oRMA;
+${NOISE}
+
+// 판금 패널: 플레이트 + 볼트 + 벤트 슬롯 + 마이크로 캐스팅
+float hPlate(vec2 uv){
+  vec2 P=uv*uCells; vec2 id=floor(P), f=fract(P)-0.5;
+  float r=hash21(id+uSeed);
+  float h=0.0;
+  float d=sdBox(f,vec2(0.445-0.06*step(0.72,r)));
+  h+=smoothstep(0.022,-0.028,d)*(0.52+0.26*step(0.5,r));
+  if(r>0.36){
+    vec2 bp=abs(f)-vec2(0.345);
+    float db=length(bp);
+    h+=smoothstep(0.046,0.020,db)*0.34;
+    h-=smoothstep(0.020,0.008,db)*0.22;
+  }
+  if(r<0.24){
+    vec2 vp=f; vp.y=fract(vp.y*6.0+0.5)-0.5;
+    float dv=sdBox(vec2(vp.x,vp.y/6.0),vec2(0.27,0.030));
+    h-=smoothstep(0.012,-0.010,dv)*0.55;
+  }
+  if(r>0.55&&r<0.72){ // 서브 그리블 스트립
+    float ds=sdBox(f-vec2(0.0,0.30),vec2(0.30,0.055));
+    h+=smoothstep(0.014,-0.012,ds)*0.30;
+  }
+  h+=(fbm(uv*90.0)-0.5)*0.075*uMicro;
+  h+=(fbm(uv*260.0)-0.5)*0.035*uMicro;
+  return h;
+}
+// 가공 원통: 원주 방향 홈 + 널링 밴드
+float hMach(vec2 uv){
+  float h=0.0;
+  float g=abs(fract(uv.y*22.0)-0.5)*2.0;
+  h+=smoothstep(0.22,0.78,g)*0.26;
+  float b=floor(uv.y*5.0);
+  float rb=hash21(vec2(b,3.0)+uSeed);
+  if(rb>0.58){
+    vec2 k=uv*vec2(52.0,52.0);
+    float kn=abs(fract(k.x+k.y)-0.5)+abs(fract(k.x-k.y)-0.5);
+    h+=(0.5-kn)*0.38;
+  }
+  if(rb<0.20){ float d=abs(fract(uv.y*5.0)-0.5); h-=smoothstep(0.42,0.18,d)*0.30; }
+  h+=(fbm(uv*vec2(70.0,140.0))-0.5)*0.09*uMicro;
+  h+=(fbm(uv*vec2(220.0,420.0))-0.5)*0.04*uMicro;
+  return h;
+}
+/* 하드서페이스 — 넓은 베벨 플레이트, 깊은 루버 슬롯, 큰 일자 나사.
+   판금(hPlate)보다 요소가 크고 수가 적어 손으로 깎은 기계 부품처럼 읽힌다. */
+float hHard(vec2 uv){
+  vec2 P=uv*2.0; vec2 id=floor(P), f=fract(P)-0.5;
+  float r=hash21(id+uSeed*1.7);
+  float h=0.0;
+  h+=smoothstep(0.055,-0.020,sdBox(f,vec2(0.425,0.405)))*0.55;   // 넓은 베벨 플레이트
+  if(r>0.30&&abs(f.x)<0.36){                                      // 루버 슬롯
+    float xr=fract(f.x*5.0+0.5)-0.5;
+    float dl=sdBox(vec2(xr*0.2,f.y-0.17),vec2(0.034,0.125));
+    h-=smoothstep(0.014,-0.008,dl)*0.72;
+  }
+  if(r<0.62){                                                     // 큰 일자 나사 2개
+    for(int i=0;i<2;i++){
+      vec2 sp=f-vec2(i==0?-0.30:0.30,-0.29);
+      h+=smoothstep(0.018,-0.010,length(sp)-0.082)*0.30;
+      h-=smoothstep(0.010,-0.006,sdBox(sp,vec2(0.072,0.015)))*0.36;
+    }
+  }
+  if(r>0.72){                                                     // 얕은 홈 라인
+    h-=smoothstep(0.012,-0.006,sdBox(f-vec2(0.0,-0.05),vec2(0.34,0.014)))*0.30;
+  }
+  h+=(fbm(uv*70.0)-0.5)*0.055*uMicro;
+  h+=(fbm(uv*200.0)-0.5)*0.030*uMicro;
+  return h;
+}
+float H(vec2 uv){ return uMode==0 ? hPlate(uv) : (uMode==1 ? hMach(uv) : hHard(uv)); }
+
+void main(){
+  vec2 uv=gl_FragCoord.xy/uRes;
+  float e=1.0/uRes;
+  float h =H(uv);
+  float hx=H(uv+vec2(e,0.0));
+  float hy=H(uv+vec2(0.0,e));
+  float gx=(hx-h)/e, gy=(hy-h)/e;
+  vec3 n=normalize(vec3(-gx,-gy,uFlat));
+
+  // 넓은 반경 차이로 캐비티 AO 근사
+  float hw=(H(uv+vec2(4.0*e,0.0))+H(uv-vec2(4.0*e,0.0))
+           +H(uv+vec2(0.0,4.0*e))+H(uv-vec2(0.0,4.0*e)))*0.25;
+  float ao=clamp(1.0-(hw-h)*1.9,0.25,1.0);
+
+  float grime=fbm(uv*6.0+uSeed*0.3);
+  float ox=smoothstep(0.56,0.88,grime);
+  vec3 alb=mix(uSteel,uRust,ox*uRustAmt);
+  alb=mix(alb,uWorn,smoothstep(0.46,0.92,h)*0.40);   // 마모된 생메탈
+  alb*=0.66+0.44*ao;
+
+  float rgh=uRghBase+uRghVar*ox-0.12*smoothstep(0.5,0.95,h)+0.07*(1.0-ao);
+  rgh=clamp(rgh,0.05,0.92);
+
+  oAlb=vec4(alb,1.0);
+  oNrm=vec4(n*0.5+0.5,1.0);
+  oRMA=vec4(rgh,1.0,ao,h*0.5+0.5);
+}`;
+
+const RES=512;
+function makeTex(){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,RES,RES,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);return t;}
+
+/* 사용자 조정 파라미터. 색은 sRGB 16진수로 받아 선형으로 변환해 넘긴다. */
+const TP={str:1.0,micro:0.2,cells:4.0,rust:0.52,rgh:0.23,rghv:0.25,
+          steel:"#55575a",rustc:"#5d4b3c",worn:"#838588",accent:"#d47e31",
+          paint:"#4c5533"};
+function lin(hex){
+  const n=parseInt(hex.slice(1),16);
+  return [Math.pow(((n>>16)&255)/255,2.2),Math.pow(((n>>8)&255)/255,2.2),Math.pow((n&255)/255,2.2)];
+}
+const TEX=[[makeTex(),makeTex(),makeTex()],[makeTex(),makeTex(),makeTex()],
+           [makeTex(),makeTex(),makeTex()]];
+const genProg=prog(GEN_VS,GEN_FS);
+const genFBO=gl.createFramebuffer();
+const aniso=gl.getExtension("EXT_texture_filter_anisotropic");
+
+function generateTextures(seed){
+  const rng=mulberry32(seed);
+  gl.bindVertexArray(null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,genFBO);
+  gl.viewport(0,0,RES,RES);
+  gl.useProgram(genProg);
+  gl.disable(gl.DEPTH_TEST);
+  const gu=k=>gl.getUniformLocation(genProg,k);
+  gl.uniform1f(gu("uFlat"),52.0/TP.str);      // 값이 작을수록 노멀이 강해진다
+  gl.uniform1f(gu("uMicro"),TP.micro);
+  gl.uniform1f(gu("uCells"),TP.cells);
+  gl.uniform1f(gu("uRustAmt"),TP.rust);
+  gl.uniform1f(gu("uRghBase"),TP.rgh);
+  gl.uniform1f(gu("uRghVar"),TP.rghv);
+  gl.uniform3fv(gu("uSteel"),lin(TP.steel));
+  gl.uniform3fv(gu("uRust"),lin(TP.rustc));
+  gl.uniform3fv(gu("uWorn"),lin(TP.worn));
+  for(let mode=0;mode<3;mode++){
+    for(let i=0;i<3;i++)
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0+i,gl.TEXTURE_2D,TEX[mode][i],0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0,gl.COLOR_ATTACHMENT1,gl.COLOR_ATTACHMENT2]);
+    gl.uniform2f(gl.getUniformLocation(genProg,"uSeed"),rng()*40,rng()*40);
+    gl.uniform1i(gl.getUniformLocation(genProg,"uMode"),mode);
+    gl.uniform1f(gl.getUniformLocation(genProg,"uRes"),RES);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    for(let i=0;i<3;i++){gl.bindTexture(gl.TEXTURE_2D,TEX[mode][i]);gl.generateMipmap(gl.TEXTURE_2D);
+      if(aniso)gl.texParameterf(gl.TEXTURE_2D,aniso.TEXTURE_MAX_ANISOTROPY_EXT,8);}
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.enable(gl.DEPTH_TEST);
+}
+
+/* ------------------------------------------------------- 메인 셰이더 */
+const MAIN_VS=`#version 300 es
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec2 aUV;
+layout(location=3) in vec4 aTan;
+layout(location=4) in float aMat;
+uniform mat4 uProj,uView,uModel; uniform mat3 uNM;
+out vec3 vP; out vec3 vN; out vec2 vUV; out vec3 vT; out float vW; flat out float vM;
+void main(){
+  vec4 wp=uModel*vec4(aPos,1.0);
+  vP=wp.xyz; vN=normalize(uNM*aNrm); vT=normalize(uNM*aTan.xyz); vW=aTan.w;
+  vUV=aUV; vM=aMat;
+  gl_Position=uProj*uView*wp;
+}`;
+
+const MAIN_FS=`#version 300 es
+precision highp float;
+in vec3 vP; in vec3 vN; in vec2 vUV; in vec3 vT; in float vW; flat in float vM;
+out vec4 o;
+uniform sampler2D tA0,tA1,tA2,tB0,tB1,tB2,tC0,tC1,tC2;
+uniform vec3 uCam;
+uniform vec3 uLP[6],uLC[6];
+uniform vec3 uMuzP,uMuzC;
+uniform vec3 uFlashP,uFlashD; uniform float uFlashI;
+uniform float uTime; uniform int uDebug; uniform int uStudio; uniform int uAmmo; uniform float uHeat; uniform vec3 uAccent,uPaint;
+
+// 7세그먼트 — 캡슐 SDF + 자리별 비트마스크
+const vec4 SEGS[7]=vec4[7](
+  vec4(0.15,0.92,0.85,0.92), vec4(0.90,0.87,0.90,0.55), vec4(0.90,0.45,0.90,0.13),
+  vec4(0.15,0.08,0.85,0.08), vec4(0.10,0.13,0.10,0.45), vec4(0.10,0.55,0.10,0.87),
+  vec4(0.15,0.50,0.85,0.50));
+const int DMASK[10]=int[10](63,6,91,79,102,109,125,7,127,111);
+float sdSeg(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;
+  float h=clamp(dot(pa,ba)/dot(ba,ba),0.0,1.0);return length(pa-ba*h);}
+
+vec3 F_S(vec3 f0,float u){return f0+(1.0-f0)*pow(1.0-u,5.0);}
+float D_GGX(float NoH,float a){float a2=a*a;float d=NoH*NoH*(a2-1.0)+1.0;return a2/(3.14159265*d*d);}
+float V_S(float NoV,float NoL,float a){float a2=a*a;
+  float gv=NoL*sqrt(NoV*NoV*(1.0-a2)+a2), gg=NoV*sqrt(NoL*NoL*(1.0-a2)+a2);
+  return 0.5/max(gv+gg,1e-5);}
+vec3 envBRDF(vec3 f0,float r,float NoV){
+  vec4 c0=vec4(-1.0,-0.0275,-0.572,0.022), c1=vec4(1.0,0.0425,1.04,-0.04);
+  vec4 rr=r*c0+c1;
+  float a=min(rr.x*rr.x,exp2(-9.28*NoV))*rr.x+rr.y;
+  vec2 AB=vec2(-1.04,1.04)*a+rr.zw;
+  return f0*AB.x+AB.y;}
+// 절차적 환경광 — 큐브맵 없이 어두운 복도를 근사
+vec3 envCol(vec3 R,float r){
+  if(uStudio==1){                       // 밝은 스튜디오 — 소프트박스 2개 근사
+    float u=R.y*0.5+0.5;
+    vec3 c=mix(vec3(0.30,0.31,0.34),vec3(0.86,0.88,0.94),u);
+    c+=vec3(1.0)*smoothstep(0.55,0.98,R.y)*mix(1.7,0.30,r);
+    c+=vec3(0.90,0.95,1.0)*smoothstep(0.62,0.96,dot(R,normalize(vec3(-0.6,0.5,0.6))))*mix(1.3,0.20,r);
+    return c;
+  }
+  float up=R.y*0.5+0.5;
+  vec3 c=mix(vec3(0.0045,0.0055,0.0070),vec3(0.020,0.021,0.026),up);
+  float bar=smoothstep(0.60,0.97,R.y)*smoothstep(0.42,0.02,abs(R.x));
+  c+=vec3(1.0,0.66,0.34)*bar*mix(1.0,0.10,r)*0.9;
+  c+=vec3(0.10,0.30,0.42)*smoothstep(0.2,-0.4,R.y)*0.25*mix(1.0,0.2,r);
+  return c;}
+
+vec3 shade(vec3 N,vec3 V,vec3 L,vec3 rad,vec3 alb,float met,float rgh){
+  vec3 H=normalize(V+L);
+  float NoL=max(dot(N,L),0.0), NoV=max(dot(N,V),1e-4);
+  float NoH=max(dot(N,H),0.0), VoH=max(dot(V,H),0.0);
+  float a=max(rgh*rgh,0.002);
+  vec3 f0=mix(vec3(0.04),alb,met);
+  vec3 F=F_S(f0,VoH);
+  vec3 spec=F*D_GGX(NoH,a)*V_S(NoV,NoL,a);
+  vec3 kd=(1.0-F)*(1.0-met);
+  return (kd*alb/3.14159265+spec)*rad*NoL;
+}
+
+void main(){
+  int m=int(vM+0.5);
+  if(m==7){                              // 절차적 그리드 바닥 (fwidth 안티에일리어싱)
+    vec2 g=vP.xz;
+    vec2 f1=abs(fract(g)-0.5)/fwidth(g);
+    float l1=1.0-min(min(f1.x,f1.y),1.0);
+    vec2 f10=abs(fract(g*0.1)-0.5)/fwidth(g*0.1);
+    float l10=1.0-min(min(f10.x,f10.y),1.0);
+    vec3 c=vec3(0.60);
+    c=mix(c,vec3(0.44),l1*0.55);
+    c=mix(c,vec3(0.28),l10*0.85);
+    c=mix(c,vec3(0.78,0.28,0.28),(1.0-min(abs(g.y)/fwidth(g.y),1.0))*0.85);
+    c=mix(c,vec3(0.28,0.42,0.82),(1.0-min(abs(g.x)/fwidth(g.x),1.0))*0.85);
+    c=mix(vec3(0.66),c,1.0-smoothstep(7.0,24.0,length(g)));
+    if(uDebug==2)c=vec3(0.5,1.0,0.5);
+    else if(uDebug!=0)c=vec3(0.6);
+    o=vec4(c,1.0); return;
+  }
+  vec3 aA=texture(tA0,vUV).rgb, nA=texture(tA1,vUV).xyz*2.0-1.0; vec4 rA=texture(tA2,vUV);
+  vec3 aB=texture(tB0,vUV).rgb, nB=texture(tB1,vUV).xyz*2.0-1.0; vec4 rB=texture(tB2,vUV);
+  vec3 aC=texture(tC0,vUV).rgb, nC=texture(tC1,vUV).xyz*2.0-1.0; vec4 rC=texture(tC2,vUV);
+
+  vec3 alb; vec3 nT; float rgh,met,ao; vec3 emis=vec3(0.0);
+  if(m==1){ alb=aB; nT=nB; rgh=rB.x; met=1.0; ao=rB.z; }
+  else    { alb=aA; nT=nA; rgh=rA.x; met=1.0; ao=rA.z; }
+
+  if(m==2){ // 도색 액센트
+    alb=mix(uAccent,uAccent*0.23,1.0-rA.z)*(0.6+0.8*rA.z);
+    met=0.0; rgh=clamp(0.36+0.35*(1.0-rA.z),0.2,0.85); nT=nA;
+  } else if(m==3){ // 러버 그립
+    alb=vec3(0.016,0.017,0.019); met=0.0; rgh=0.86; nT=nA*vec3(1.6,1.6,1.0);
+  } else if(m==4){ // 발광
+    alb=vec3(0.02); met=0.0; rgh=0.35;
+    float fl=0.86+0.14*sin(uTime*11.0+vP.z*7.0);
+    emis=vec3(0.16,0.86,1.0)*2.6*fl;
+  } else if(m==5){ // 총열 보어
+    alb=vec3(0.006); met=1.0; rgh=0.55; ao=0.25;
+  } else if(m==13){ // 하드서페이스 도색 (올리브) — 돌출부는 도장이 벗겨진다
+    alb=mix(uPaint,uPaint*0.26,1.0-rC.z)*(0.62+0.76*rC.z);
+    alb=mix(alb,vec3(0.155,0.150,0.140),smoothstep(0.60,0.95,rC.w)*0.34);
+    met=0.06; rgh=clamp(0.46+0.28*(1.0-rC.z),0.26,0.90); nT=nC;
+  } else if(m==14){ // 하드서페이스 강판 (슬라이드)
+    alb=aC*1.30; met=1.0; ao=rC.z;
+    rgh=clamp(rC.x*0.72,0.10,0.55); nT=nC;
+  } else if(m==12){ // 매끄러운 총열 — 가공 홈 대신 노멀을 눌러 평활하게
+    alb=aB*1.10; met=1.0; ao=rB.z;
+    rgh=clamp(rB.x*0.42+0.04,0.05,0.34);
+    nT=normalize(mix(vec3(0.0,0.0,1.0),nB,0.16));
+  } else if(m==11){ // 샷셸 플라스틱 하울
+    alb=mix(vec3(0.44,0.055,0.030),vec3(0.15,0.020,0.012),1.0-rB.z);
+    met=0.0; rgh=clamp(0.32+0.26*(1.0-rB.z),0.18,0.80); nT=nB;
+  } else if(m==10){ // 황동 탄피 / 탄
+    alb=mix(vec3(0.60,0.40,0.13),vec3(0.26,0.16,0.05),1.0-rB.z);
+    met=1.0; rgh=clamp(0.16+0.34*(1.0-rB.z),0.10,0.62); nT=nB;
+  } else if(m==8){ // 안전 위험표시 띠 (노랑/검정 사선)
+    float tt=fract((vUV.x+vUV.y)*3.2);
+    float w=max(fwidth(tt)*1.2,0.012);
+    float st=smoothstep(0.5-w,0.5+w,tt)*(1.0-smoothstep(1.0-w,1.0,tt));
+    vec3 yl=vec3(0.52,0.34,0.020), bk=vec3(0.012,0.012,0.013);
+    alb=mix(bk,yl,st);
+    alb=mix(alb,vec3(0.16,0.15,0.13),smoothstep(0.55,0.95,rA.w)*0.35); // 마모
+    alb*=0.55+0.55*rA.z;
+    met=0.0; rgh=clamp(0.44+0.30*(1.0-rA.z),0.25,0.9); nT=nA;
+  } else if(m==6){ // 아머(도색)
+    alb=mix(vec3(0.030,0.033,0.028),vec3(0.075,0.070,0.055),rA.z)*0.9;
+    met=0.12; rgh=clamp(0.52+0.25*(1.0-rA.z),0.3,0.9); nT=nA;
+  }
+
+  /* 총열 가열 — mat 1(가공 원통)에만 흑체 방사 근사를 더한다.
+     하이트맵 값으로 밝기를 흔들어 균일한 발광처럼 보이지 않게 한다. */
+  if((m==1||m==12)&&uHeat>0.24){
+    float h=clamp((uHeat-0.24)/0.76,0.0,1.0);
+    float v=0.68+0.32*rB.w;
+    float fl=0.90+0.10*sin(uTime*23.0+vUV.y*9.0);
+    // 강도를 올리면 세 채널이 다 포화돼 흰색이 된다. 적색만 포화되고
+    // 녹·청은 낮게 남는 지점에서 멈춰, 최대에서도 적열로 유지한다.
+    emis+=mix(vec3(1.0,0.035,0.004),vec3(1.0,0.095,0.020),h)*pow(h,1.6)*2.5*v*fl;
+    rgh=clamp(rgh*0.85,0.08,0.90);
+  }
+
+  vec3 N0=normalize(vN);
+  vec3 T=normalize(vT-N0*dot(N0,vT));
+  vec3 B=cross(N0,T)*vW;
+  vec3 N=normalize(mat3(T,B,N0)*normalize(nT));
+  vec3 V=normalize(uCam-vP);
+  if(m==9){                                // 디지털 탄약 카운터
+    vec2 p=vUV;
+    vec3 c=vec3(0.008,0.011,0.013);
+    if(p.x>0.035&&p.x<0.965&&p.y>0.07&&p.y<0.93){
+      float lit=0.0,gh=0.0;
+      for(int k=0;k<3;k++){
+        vec2 q=vec2((p.x-(0.09+float(k)*0.28))/0.24,(p.y-0.16)/0.68);
+        if(q.x<-0.25||q.x>1.25) continue;
+        int dv = k==0?100:(k==1?10:1);
+        int mk = uAmmo<0 ? 64 : DMASK[(uAmmo/dv)%10];   // 64 = 가운데 세그먼트만
+        for(int i=0;i<7;i++){
+          float dd=sdSeg(q,SEGS[i].xy,SEGS[i].zw)-0.052;
+          float a=smoothstep(0.022,-0.012,dd);
+          gh+=a*0.05;
+          if(((mk>>i)&1)==1) lit+=a;
+        }
+      }
+      vec3 on=vec3(0.18,1.0,0.82);
+      float bl=uAmmo<0?(0.35+0.65*step(0.0,sin(uTime*18.0))):1.0;   // 과열 점멸
+      c+=on*(min(lit,1.0)*3.0+gh*0.6)*bl;
+      c*=0.90+0.10*sin(p.y*180.0);           // 스캔라인
+    }
+    c+=envCol(reflect(-V,normalize(vN)),0.06)*0.09;   // 유리 반사
+    if(uDebug!=0)c=vec3(0.5);
+    o=vec4(c,1.0); return;
+  }
+  if(dot(N,V)<0.0) N=normalize(N-V*dot(N,V)*1.2); // 그레이징 아티팩트 완화
+
+  vec3 col=vec3(0.0);
+  for(int i=0;i<6;i++){
+    vec3 d=uLP[i]-vP; float dist=length(d);
+    vec3 rad=uLC[i]/(1.0+0.9*dist*dist);
+    col+=shade(N,V,d/dist,rad,alb,met,rgh);
+  }
+  { vec3 d=uMuzP-vP; float dist=length(d);
+    vec3 rad=uMuzC/(1.0+3.2*dist*dist);
+    col+=shade(N,V,d/max(dist,1e-4),rad,alb,met,rgh); }
+  if(uFlashI>0.0){
+    vec3 d=uFlashP-vP; float dist=length(d); vec3 L=d/max(dist,1e-4);
+    float cone=smoothstep(0.80,0.94,dot(-L,uFlashD));
+    vec3 rad=vec3(1.0,0.94,0.86)*uFlashI*cone/(1.0+0.18*dist*dist);
+    col+=shade(N,V,L,rad,alb,met,rgh);
+  }
+  float NoV=max(dot(N,V),1e-4);
+  vec3 R=reflect(-V,N);
+  vec3 f0=mix(vec3(0.04),alb,met);
+  col+=envCol(R,rgh)*envBRDF(f0,rgh,NoV)*ao;
+  col+=alb*(1.0-met)*envCol(N,1.0)*ao*1.6;
+  col+=emis;
+
+  if(uDebug==1)col=alb;
+  else if(uDebug==2)col=N*0.5+0.5;
+  else if(uDebug==3)col=vec3(rgh);
+  else if(uDebug==4)col=vec3(ao);
+  o=vec4(col,1.0);
+}`;
+
+const POST_VS=GEN_VS;
+const POST_FS=`#version 300 es
+precision highp float;
+uniform sampler2D uS; uniform vec2 uRes; uniform float uTime; uniform int uDebug; uniform int uStudio;
+out vec4 o;
+vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0);}
+void main(){
+  vec2 uv=gl_FragCoord.xy/uRes;
+  vec2 d=uv-0.5;
+  float ca=0.0022*dot(d,d)*3.5;
+  vec3 c;
+  c.r=texture(uS,uv+d*ca).r; c.g=texture(uS,uv).g; c.b=texture(uS,uv-d*ca).b;
+  if(uDebug==0&&uStudio==1){ c=aces(c*1.02); }
+  else if(uDebug==0){
+    vec3 bl=vec3(0.0);
+    for(int i=0;i<16;i++){
+      float a=float(i)*2.39996, r=sqrt(float(i)+0.5)/4.0;
+      bl+=max(texture(uS,uv+vec2(cos(a),sin(a))*r*0.042).rgb-0.60,0.0);
+    }
+    c+=bl/16.0*1.7;
+    c=mix(vec3(dot(c,vec3(0.299,0.587,0.114))),c,0.86);      // 살짝 탈채도
+    c*=mix(vec3(0.88,0.95,1.06),vec3(1.06,1.0,0.92),smoothstep(0.0,0.5,length(c))); // 암부 청록 / 명부 앰버
+    c=aces(c*1.15);
+    c*=1.0-0.62*dot(d,d)*2.0;
+    float g=fract(sin(dot(uv*uRes+uTime*57.0,vec2(12.9898,78.233)))*43758.5453);
+    c+=(g-0.5)*0.045;
+  }
+  o=vec4(max(c,0.0),1.0);
+}`;
+
+/* 빌보드 파티클 — stretch>0 이면 진행방향으로 늘린 예광탄, 아니면 카메라 정면 */
+const PART_VS=`#version 300 es
+layout(location=0) in vec2 aC;
+layout(location=1) in vec3 iPos;
+layout(location=2) in vec4 iSC;     // size, stretch, intensity, kind
+layout(location=3) in vec3 iCol;
+layout(location=4) in vec3 iDir;
+uniform mat4 uProj,uView; uniform vec3 uCam;
+out vec2 vC; out vec3 vCol; out float vI; out float vK;
+void main(){
+  vec3 R=vec3(uView[0][0],uView[1][0],uView[2][0]);
+  vec3 U=vec3(uView[0][1],uView[1][1],uView[2][1]);
+  vec3 p;
+  if(iSC.y>0.0){
+    vec3 d=normalize(iDir);
+    vec3 r=normalize(cross(d,normalize(uCam-iPos)));
+    p=iPos+r*aC.x*iSC.x+d*aC.y*iSC.y;
+  }else{
+    float rr=iDir.x, cr=cos(rr), sr=sin(rr);        // 스프라이트 롤
+    vec2 cc=vec2(aC.x*cr-aC.y*sr, aC.x*sr+aC.y*cr);
+    p=iPos+R*cc.x*iSC.x+U*cc.y*iSC.x;
+  }
+  vC=aC; vCol=iCol; vI=iSC.z; vK=iSC.w;
+  gl_Position=uProj*uView*vec4(p,1.0);
+}`;
+const PART_FS=`#version 300 es
+precision highp float;
+in vec2 vC; in vec3 vCol; in float vI; in float vK;
+out vec4 o;
+void main(){
+  float r=length(vC), a;
+  if(vK<0.5){                       // 부드러운 플룸
+    a=pow(max(1.0-r,0.0),1.7);
+  }else if(vK<1.5){                 // 단단한 스파크 / 예광
+    a=pow(max(1.0-r,0.0),3.4);
+  }else if(vK<2.5){                 // 총구 화염 — 다갈래 별 + 밝은 코어
+    float an=atan(vC.y,vC.x);
+    float pet=0.56+0.44*pow(abs(cos(an*2.5)),0.55);
+    a=pow(max(1.0-r/pet,0.0),1.30)+pow(max(1.0-r/0.40,0.0),3.0)*1.6;
+  }else{                            // 연기 — 원형을 피하려고 완만한 로브를 준다
+    float an=atan(vC.y,vC.x);
+    float w=0.86+0.14*cos(an*3.0)*cos(an*2.0);
+    a=pow(max(1.0-r/w,0.0),2.2);
+  }
+  o=vec4(vCol*vI*a, a*vI);          // 프리멀티플라이드 — 가산/알파 양쪽에서 성립
+}`;
+
+const mainProg=prog(MAIN_VS,MAIN_FS);
+const partProg=prog(PART_VS,PART_FS);
+const QU={};["uProj","uView","uCam"].forEach(k=>QU[k]=gl.getUniformLocation(partProg,k));
+const PMAX=420, PSTR=13*4;
+const PINST=new Float32Array(PMAX*13);
+const partVAO=gl.createVertexArray();
+const partIB=gl.createBuffer();
+{
+  gl.bindVertexArray(partVAO);
+  const cb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,cb);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,partIB);
+  gl.bufferData(gl.ARRAY_BUFFER,PINST.byteLength,gl.DYNAMIC_DRAW);
+  for(const [loc,sz,off] of [[1,3,0],[2,4,12],[3,3,28],[4,3,40]]){
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,sz,gl.FLOAT,false,PSTR,off);
+    gl.vertexAttribDivisor(loc,1);
+  }
+  gl.bindVertexArray(null);
+}
+const postProg=prog(POST_VS,POST_FS);
+const U={};
+["uProj","uView","uModel","uNM","uCam","uLP","uLC","uMuzP","uMuzC",
+ "uFlashP","uFlashD","uFlashI","uTime","uDebug","uStudio","uAmmo","uHeat","uAccent","uPaint","tC0","tC1","tC2","tA0","tA1","tA2","tB0","tB1","tB2"]
+ .forEach(k=>U[k]=gl.getUniformLocation(mainProg,k));
+const PU={};["uS","uRes","uTime","uDebug","uStudio"].forEach(k=>PU[k]=gl.getUniformLocation(postProg,k));
+
+/* ------------------------------------------------------------- 메시 GPU */
+function upload(data){
+  const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+  const S=13*4;
+  const spec=[[0,3,0],[1,3,12],[2,2,24],[3,4,32],[4,1,48]];
+  for(const [loc,size,off] of spec){gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,size,gl.FLOAT,false,S,off);}
+  gl.bindVertexArray(null);
+  return {vao,count:data.length/13,buf:b};
+}
+function destroy(m){if(m){gl.deleteVertexArray(m.vao);gl.deleteBuffer(m.buf);}}
+
+// 뷰포트 상태 — updateHUD() 가 rebuildGun() 안에서 먼저 호출되므로 여기서 선언한다
+const AMMOMAX=999;
+const COOL_IDLE=0.17, COOL_FIRE=0.02, RESET_AT=0.45;
+/* 무기 슬롯. spinUp=총열 회전 예열, pump>0=펌프 사이클(그동안 발사 불가).
+   moving 그룹에 무기별로 다른 변환이 걸린다 — 캐논은 Z축 회전, 샷건은 힌지 개방. */
+const WEAPONS=[
+ {name:"권총",kind:2,auto:0,spinUp:0,cycle:0.16,pellets:1,spread:0.008,
+  heat:0.006,kick:0.020,kickR:0.008,shake:0.014,vrec:1.6,muz:-0.19,
+  vm:[0.15,-0.145,-0.42],pickup:36,ejP:[0.028,0.018,0.030],ejV:[1.9,2.6,-0.6],
+  shell:0,mag:12,rel:1.35,reldly:0.10,twin:0,mfl:1.3,flash:0.15,smoke:0.05,
+  vpush:0.040,vdec:8.0,ejShot:1},
+ {name:"로터리 캐논",kind:0,auto:1,spinUp:1,cycle:0.055,pellets:1,spread:0.014,
+  heat:0.0105,kick:0.0090,kickR:0.0050,shake:0.010,vrec:1.0,muz:-0.70,
+  vm:[0.20,-0.20,-0.34],pickup:150,ejP:[0.080,0.082,0.140],ejV:[0.75,3.9,-2.6],
+  shell:0,mag:0,rel:0,reldly:0,twin:0,mfl:1.0,flash:0.21,smoke:0.055,vpush:0.034,vdec:9.0,ejShot:1},
+ {name:"더블배럴 샷건",kind:1,auto:0,spinUp:0,cycle:0.30,pellets:12,spread:0.062,
+  heat:0.030,kick:0.075,kickR:0.022,shake:0.055,vrec:4.0,muz:-0.68,
+  vm:[0.19,-0.21,-0.31],pickup:12,ejP:[0.032,0.010,-0.050],ejV:[0.35,3.2,-0.7],
+  shell:1,mag:2,rel:1.30,reldly:0.55,twin:0.032,mfl:2.8,flash:0.46,smoke:0.20,vpush:0.062,vdec:5.0,ejShot:0}
+];
+const wstore=[{ammo:96, heat:0,over:false,loaded:12},
+              {ammo:200,heat:0,over:false,loaded:0},
+              {ammo:24, heat:0,over:false,loaded:2}];
+let wi=0, ammo=96, heat=0, over=false, loaded=12, clickT=0;
+let slideZ=0, magDrop=0;
+let reloadReq=false;
+let relT=0, dryT=0, ejd=false, ldd=false, snB=false, spent=0, side=0, shotSide=0, trigPrev=false;
+/* 꺾임 각도 곡선 — 단일 smoothstep 대신 구간을 나눠 리듬을 만든다.
+   급개방(감속 도착·오버슛) → 되튐 정착 → 유지 → 가속 폐쇄 → 충돌 되튐. */
+function brkCurve(u){
+  if(u<0.16){ const t=u/0.16;      return 1.06*(1-Math.pow(1-t,3)); }
+  if(u<0.26){ const t=(u-0.16)/0.10; return 1.06-0.06*(t*t*(3-2*t)); }
+  if(u<0.52) return 1.0;
+  if(u<0.68){ const t=(u-0.52)/0.16; return 1.0-t*t*t; }
+  if(u<0.82){ const t=(u-0.68)/0.14; return 0.11*Math.sin(t*Math.PI)*(1-t); }
+  return 0;
+}
+function useWeapon(n){
+  wstore[wi]={ammo:ammo,heat:heat,over:over,loaded:loaded};
+  wi=n; ammo=wstore[n].ammo; heat=wstore[n].heat; over=wstore[n].over; loaded=wstore[n].loaded;
+  spin=0;spinV=0;shotT=0.25;relT=0;climb=0;updateHUD();
+}
+function giveAmmo(w,n){
+  if(w===wi) ammo=Math.min(AMMOMAX,ammo+n);
+  else wstore[w].ammo=Math.min(AMMOMAX,wstore[w].ammo+n);
+}
+function ammoOf(w){ return w===wi?ammo:wstore[w].ammo; }
+const parts=[], shells=[], pickups=[];
+for(let i=0;i<6;i++){
+  const a=i/6*Math.PI*2+0.4;
+  pickups.push({p:[Math.cos(a)*4.2,0.265,Math.sin(a)*4.2+1.0],on:true,rt:0,w:i%3});
+}
+function spawnP(o){ if(parts.length<PMAX) parts.push(o); }
+function rot3(M,v){return [M[0]*v[0]+M[4]*v[1]+M[8]*v[2],
+                           M[1]*v[0]+M[5]*v[1]+M[9]*v[2],
+                           M[2]*v[0]+M[6]*v[1]+M[10]*v[2]];}
+function rnd(a){return (Math.random()-0.5)*2*a;}
+
+function muzzleFX(mp,fwd,sz){
+  const off=d=>[mp[0]+fwd[0]*d,mp[1]+fwd[1]*d,mp[2]+fwd[2]*d];
+  const rr=Math.random()*6.28, S=(sz||0.21)/0.21;
+  // 다갈래 별 2겹 — 회전을 다르게 줘서 발사마다 형태가 바뀐다
+  spawnP({p:off(0.02),v:[0,0,0],t:0,l:0.052+0.02*(S-1),s0:0.21*S,s1:0.06*S,i0:11,i1:0,
+          c:[1.0,0.70,0.32],k:2,g:0,dr:0,st:0,rt:rr,ov:1});
+  spawnP({p:off(0.05),v:[0,0,0],t:0,l:0.040,s0:0.12*S,s1:0.04*S,i0:8,i1:0,
+          c:[1.0,0.90,0.66],k:2,g:0,dr:0,st:0,rt:rr*1.7+1.1,ov:1});
+  // 총구 앞으로 뻗는 플룸 (진행방향으로 늘린 빌보드)
+  spawnP({p:off(0.11),v:fwd.slice(),t:0,l:0.055,s0:0.055*S,s1:0.020*S,i0:6,i1:0,
+          c:[1.0,0.80,0.48],k:0,g:0,dr:0,st:0.15*S,ov:1});
+  for(let i=0;i<Math.round(6*S);i++)
+    spawnP({p:off(0.03),
+            v:[fwd[0]*8+rnd(3.4),fwd[1]*8+rnd(3.4),fwd[2]*8+rnd(3.4)],
+            t:0,l:0.10+Math.random()*0.14,s0:0.017,s1:0.004,i0:5,i1:0,
+            c:[1.0,0.60,0.16],k:1,g:6,dr:3,st:0,ov:1});
+}
+function smokePuff(p,fwd,sc){
+  spawnP({p:[p[0]+fwd[0]*0.16+rnd(0.02),p[1]+fwd[1]*0.16+rnd(0.02),p[2]+fwd[2]*0.16+rnd(0.02)],
+          v:[fwd[0]*1.4+rnd(0.5),fwd[1]*1.4+0.5+Math.random()*0.4,fwd[2]*1.4+rnd(0.5)],
+          t:0,l:0.75+Math.random()*0.55,s0:0.055,s1:0.34*(sc||1),i0:0.34,i1:0,
+          c:[0.30,0.30,0.32],k:3,g:-0.6,dr:2.2,st:0,rt:Math.random()*6.28,ov:0,sm:1});
+}
+function tracer(mp,fwd,spread){
+  const sp=88, s=spread||0.014, d=[fwd[0]+rnd(s),fwd[1]+rnd(s),fwd[2]+rnd(s)];
+  const l=Math.hypot(d[0],d[1],d[2]);
+  spawnP({p:[mp[0]+d[0]*0.1/l,mp[1]+d[1]*0.1/l,mp[2]+d[2]*0.1/l],
+          v:[d[0]/l*sp,d[1]/l*sp,d[2]/l*sp],t:0,l:0.9,
+          s0:0.022,s1:0.014,i0:3.4,i1:1.2,c:[1.0,0.80,0.42],k:1,g:0,dr:0,st:1.6,hit:1,ov:0});
+}
+function impactFX(q){
+  spawnP({p:q.p.slice(),v:[0,0,0],t:0,l:0.09,s0:0.10,s1:0.02,i0:5,i1:0,
+          c:[1.0,0.72,0.35],k:0,g:0,dr:0,st:0,ov:0});
+  for(let i=0;i<7;i++)
+    spawnP({p:q.p.slice(),v:[rnd(2.6),0.8+Math.random()*2.4,rnd(2.6)],
+            t:0,l:0.25+Math.random()*0.3,s0:0.012,s1:0.003,i0:4,i1:0,
+            c:[1.0,0.66,0.22],k:1,g:9,dr:1.2,st:0,ov:0});
+}
+function ejectShell(M,w,po,ve){
+  if(shells.length>34)shells.shift();
+  const EP=po||w.ejP, EV=ve||w.ejV;
+  /* 배출구는 화면 우하단 모서리(NDC 0.96). 옆으로 던지면 즉시 프레임 밖이고,
+     카메라 쪽(+z)으로 던지면 0.13초 만에 카메라 뒤로 빠진다.
+     위 + 앞(-z) 조합이라야 화면 우측에서 호를 그린다. 이 값으로 약 0.9초 체류. */
+  shells.push({p:xf(M,EP),
+               v:rot3(M,[(EP[0]<0?-EV[0]:EV[0])+rnd(0.35),
+                         EV[1]+Math.random()*0.7,EV[2]+rnd(0.5)]),
+               r:[Math.random()*6,Math.random()*6,Math.random()*6],
+               w:[rnd(20),rnd(20),rnd(20)],t:0,s:w.shell});
+}
+let climb=0;
+let mode=1,oYaw=0.7,oPitch=-0.22,oDist=1.55,turn=0,autoTurn=false,showHands=false;
+let gunSeed=7, texSeed=1337;
+let WEP=[];
+const mGrid=upload(buildGrid());
+const mShell=upload(buildShell());
+const mShot=upload(buildShotshell());
+const mPick=[upload(buildPickup(0)),upload(buildPickup(1)),upload(buildPickup(2))];
+function rebuildGun(){
+  for(const w of WEP){destroy(w.stat);destroy(w.spin);destroy(w.hands);
+                      destroy(w.hmov);destroy(w.magm);}
+  WEP=[buildPistol(gunSeed^0x2c1b),buildGun(gunSeed),buildShotgun(gunSeed^0x9e37)].map(g=>({
+    stat:upload(g.stat),spin:upload(g.spin),hands:upload(g.hands),
+    hmov:upload(g.hmov),magm:upload(g.magm)}));
+  updateHUD();
+}
+rebuildGun();
+generateTextures(texSeed);
+
+/* ---------------------------------------------------------- 씬 FBO */
+let sceneFBO=gl.createFramebuffer(),sceneTex=null,sceneDep=null,W=0,Hh=0;
+function resize(){
+  const dpr=Math.min(devicePixelRatio||1,1.75);
+  W=Math.max(2,Math.floor(innerWidth*dpr));Hh=Math.max(2,Math.floor(innerHeight*dpr));
+  cv.width=W;cv.height=Hh;
+  if(sceneTex)gl.deleteTexture(sceneTex);
+  if(sceneDep)gl.deleteRenderbuffer(sceneDep);
+  sceneTex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,sceneTex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,W,Hh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  sceneDep=gl.createRenderbuffer();gl.bindRenderbuffer(gl.RENDERBUFFER,sceneDep);
+  gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT24,W,Hh);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,sceneFBO);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,sceneTex,0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,sceneDep);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+addEventListener("resize",resize);resize();
+
+/* ------------------------------------------------------- 텍스처 조정 UI */
+{
+  const box=document.getElementById("tune");
+  const SL=[["str","노멀 세기",0.2,3,0.05],["micro","마이크로 노이즈",0,3,0.05],
+            ["cells","패널 밀도",1,10,0.5],["rust","오염 / 녹 양",0,1,0.02],
+            ["rgh","러프니스",0.05,0.7,0.01],["rghv","러프니스 변화",0,0.6,0.01]];
+  const CO=[["steel","강판 베이스"],["rustc","녹 / 오염"],
+            ["worn","마모 금속"],["accent","액센트 (주황)"],["paint","도색 (올리브)"]];
+  let html="<h4>절차적 텍스처</h4>";
+  for(const [k,l,mn,mx,st] of SL)
+    html+=`<div class="row"><div class="lab"><span>${l}</span><i id="v_${k}">${TP[k]}</i></div>`+
+          `<input type="range" id="t_${k}" min="${mn}" max="${mx}" step="${st}" value="${TP[k]}"></div>`;
+  for(const [k,l] of CO)
+    html+=`<div class="row"><div class="lab"><span>${l}</span></div>`+
+          `<input type="color" id="t_${k}" value="${TP[k]}"></div>`;
+  html+='<div class="hint">P 로 패널 접기 · B 로 시드 변경</div>';
+  box.innerHTML=html;
+  for(const [k] of SL){
+    const el=document.getElementById("t_"+k), out=document.getElementById("v_"+k);
+    el.addEventListener("input",()=>{TP[k]=+el.value;out.textContent=el.value;
+      generateTextures(texSeed);});
+  }
+  for(const [k] of CO){
+    const el=document.getElementById("t_"+k);
+    // 액센트는 메인 셰이더 유니폼이라 재생성이 필요 없다
+    el.addEventListener("input",()=>{TP[k]=el.value;
+      if(k!=="accent"&&k!=="paint")generateTextures(texSeed);});
+  }
+}
+
+/* ------------------------------------------------------------ 입력/상태 */
+const key={};let yaw=0,pitch=0,px=0,py=0,pz=3.2,firing=false,debug=0,flash=1;
+let spin=0,spinV=0,shotT=0,muzzle=0,recoil=0,jolt=0,bob=0,idle=0,shakeX=0,shakeY=0;
+addEventListener("keydown",e=>{
+  if(e.target&&/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))return;
+  key[e.code]=1;
+  if(e.code==="KeyP"){const b=document.getElementById("tune");
+    b.style.display=b.style.display==="none"?"block":"none";}
+  if(e.code==="Space")e.preventDefault();
+  if(e.code==="KeyT")autoTurn=!autoTurn;
+  if(e.code==="KeyQ")useWeapon((wi+1)%WEAPONS.length);
+  if(e.code==="KeyR")reloadReq=true;
+  if(e.code==="KeyH")showHands=!showHands;
+  if(e.code==="KeyV"){mode=1-mode;showHands=(mode===0);
+    if(mode===1){try{document.exitPointerLock();}catch(_){}}else{engage();}
+    updateHUD();}
+  if(e.code==="KeyC"){px=0;pz=3.2;yaw=0;pitch=0;oYaw=0.7;oPitch=-0.22;oDist=1.55;}
+  if(e.code==="KeyB"){texSeed=(Math.random()*1e6)|0;generateTextures(texSeed);updateHUD();}
+  if(e.code==="KeyG"){gunSeed=(Math.random()*1e6)|0;rebuildGun();}
+  if(e.code>="Digit1"&&e.code<="Digit5")debug=+e.code.slice(5)-1;});
+addEventListener("keyup",e=>key[e.code]=0);
+const start=document.getElementById("start");
+const hint=document.getElementById("hint");
+let locked=false,dragging=false,engaged=false;
+function engage(){
+  engaged=true; start.style.display="none";
+  try{cv.focus();}catch(e){}
+  // 포인터 잠금은 iframe 권한(allow="pointer-lock") 없으면 조용히 실패한다.
+  // 실패해도 드래그 조작으로 계속 쓸 수 있게 한다.
+  try{const r=cv.requestPointerLock(); if(r&&r.catch)r.catch(function(){});}catch(e){}
+  setTimeout(function(){
+    if(!locked&&hint)hint.textContent="포인터 잠금이 차단된 환경 — 좌클릭 드래그로 시점 이동, Space 로 발사";
+  },120);
+}
+start.addEventListener("mousedown",e=>{e.preventDefault();engage();});
+if(mode===1){engaged=true;start.style.display="none";}
+cv.addEventListener("mousedown",()=>{if(!engaged)engage();});
+document.addEventListener("pointerlockchange",()=>{
+  locked=document.pointerLockElement===cv;
+  if(hint)hint.textContent=locked?"":"포인터 잠금이 차단된 환경 — 좌클릭 드래그로 시점 이동, Space 로 발사";
+  if(!engaged)start.style.display="flex";
+});
+addEventListener("mousemove",e=>{
+  if(!engaged)return;
+  if(!locked&&!dragging)return;
+  if(mode===1){
+    oYaw-=e.movementX*0.006;oPitch-=e.movementY*0.006;
+    oPitch=Math.max(-1.40,Math.min(1.40,oPitch));
+  }else{
+    yaw-=e.movementX*0.0022;pitch-=e.movementY*0.0022;
+    pitch=Math.max(-1.45,Math.min(1.45,pitch));
+  }
+});
+addEventListener("wheel",e=>{e.preventDefault();
+  oDist=Math.max(0.42,Math.min(7,oDist*(1+Math.sign(e.deltaY)*0.11)));},{passive:false});
+addEventListener("mousedown",e=>{
+  if(e.target&&e.target.closest&&e.target.closest("#tune"))return;  // 슬라이더 조작 중 시점 회전 방지
+  if(e.button!==0)return;
+  if(locked)firing=true; else dragging=true;});
+addEventListener("mouseup",e=>{if(e.button!==0)return;firing=false;dragging=false;});
+addEventListener("contextmenu",e=>e.preventDefault());
+
+function updateHUD(){
+  document.getElementById("stat").innerHTML=
+    `${WEAPONS[wi].name} <em>${(WEP.length?((WEP[wi].stat.count+WEP[wi].spin.count)/3|0):0).toLocaleString()}</em> tri &nbsp;/&nbsp; 그리드 <em>2</em> tri<br>`+
+    `텍스처 <em>${RES}×${RES}</em> × 6 (알베도·노멀·RMA × 2세트) — 런타임 생성<br>`+
+    `gunSeed <em>${gunSeed}</em> &nbsp; texSeed <em>${texSeed}</em> &nbsp; 에셋 파일 <em>0</em><br>`+
+    `모드 <em>${mode===1?"스튜디오 오빗":"1인칭 뷰모델"}</em> &nbsp; 탄약 <em>${ammo}</em>${WEAPONS[wi].mag?` (장전 <em>${loaded}</em>/${WEAPONS[wi].mag})`:""} &nbsp; 열 <em>${(heat*100)|0}%</em>${over?" 과열":""}`;
+}
+updateHUD();
+
+// 3점 조명 리그 (키 / 필 / 림) — 모델 검수용
+const SP=new Float32Array([ 2.0,2.4, 1.9,  -2.3,1.1, 1.6,  -1.0,1.7,-2.6,
+                            0.0,-1.4, 0.0,   0,0,0,          0,0,0]);
+const LBUF=new Float32Array(18);
+const SC=new Float32Array([ 26,26,25,          5.5,6.2,7.5,   13,11,8,
+                            1.4,1.5,1.7,     0,0,0,          0,0,0]);
+
+/* --------------------------------------------------------------- 렌더 */
+let last=performance.now();
+function frame(now){
+  const dt=Math.min((now-last)/1000,0.05);last=now;
+  const t=now/1000;
+
+  // 이동
+  const sp=(key.ShiftLeft?4.2:2.3)*dt;
+  const fx=-Math.sin(yaw),fz=-Math.cos(yaw);
+  let mv=0;
+  if(key.KeyW){px+=fx*sp;pz+=fz*sp;mv=1;}
+  if(key.KeyS){px-=fx*sp;pz-=fz*sp;mv=1;}
+  if(key.KeyA){px+=fz*sp;pz-=fx*sp;mv=1;}
+  if(key.KeyD){px-=fz*sp;pz+=fx*sp;mv=1;}
+  px=Math.max(-14,Math.min(14,px));pz=Math.max(-14,Math.min(14,pz));
+  bob+=mv?dt*9.5:0;
+  py=1.62+(mv?Math.sin(bob)*0.022:0);
+
+  // 발사 / 과열
+  const WP=WEAPONS[wi];
+  const trig=firing||key.Space===1;
+  const trigEdge=trig&&!trigPrev; trigPrev=trig;
+  heat=Math.max(0,heat-dt*(trig&&!over?COOL_FIRE:COOL_IDLE));
+  if(over&&heat<RESET_AT) over=false;
+  const hasRound = WP.mag>0 ? loaded>0 : ammo>0;
+  const fire=trig&&hasRound&&!over&&relT<=0;
+  const target=(WP.spinUp&&fire)?36:0;
+  spinV+=(target-spinV)*Math.min(dt*(fire?2.6:3.4),1);
+  spin+=spinV*dt;
+  shotT-=dt;
+  // 브레이크 오픈 재장전 — 꺾임 → 탄피 배출 → 장전 → 닫힘
+  let brk=0, relU=0, rlp=0;
+  if(relT>0){
+    relT=Math.max(0,relT-dt); relU=1-relT/WP.rel;
+    brk=brkCurve(relU);
+    rlp=Math.min(1,relU/0.10)*Math.min(1,(1-relU)/0.14);   // 재장전 자세 가중치
+  }
+  // 슬라이드 왕복 — 발사 사이클 앞 35%는 후퇴, 나머지는 전진. 비면 후퇴 고정.
+  if(WP.kind===2){
+    const empty=loaded<=0&&(relT<=0||relU<0.86);
+    let c=0;
+    if(shotT>0){ const u=1-shotT/WP.cycle;
+      c = u<0.35 ? u/0.35 : Math.max(0,1-(u-0.35)/0.65); }
+    slideZ=(empty?1:c)*0.046;
+    magDrop = relT<=0 ? 0
+      : relU<0.22 ? 0.30*(relU/0.22)
+      : relU<0.56 ? 0.30
+      : relU<0.80 ? 0.30*(1-(relU-0.56)/0.24) : 0;
+  } else { slideZ=0; magDrop=0; }
+  let shot=false;
+  const ready = hasRound&&!over&&shotT<=0&&relT<=0&&(WP.spinUp?spinV>26:true);
+  if((WP.auto?fire:(trigEdge&&fire))&&ready){
+    shotT=WP.cycle; muzzle=1; recoil=WP.vrec; shot=true;
+    shotSide=side; side^=1;
+    if(WP.mag>0){loaded--; if(!WP.ejShot) spent++; if(loaded<=0) dryT=WP.reldly;}
+    else ammo--;
+    heat+=WP.heat; if(heat>=1){heat=1;over=true;}
+    shakeX=rnd(WP.shake);shakeY=rnd(WP.shake*0.8);
+    // 실제 반동 — 조준점을 밀어올린다. 65%만 회복되므로 누적 상승이 남는다
+    const k=WP.kick+Math.random()*WP.kickR;
+    pitch=Math.min(1.45,pitch+k); yaw+=rnd(WP.kick*0.6); climb+=k*0.65;}
+  if(!fire&&climb>0){const r=Math.min(climb,dt*0.95);pitch-=r;climb-=r;}
+  /* 비면 자동으로 꺾는다. 단, 마지막 발사 직후 바로 열면 반동 동작과 겹쳐
+     오작동처럼 보이므로 reldly 만큼 뜸을 들인다. R 은 즉시. */
+  if(dryT>0) dryT=Math.max(0,dryT-dt);
+  if(WP.mag>0&&relT<=0&&ammo>0&&loaded<WP.mag&&
+     (reloadReq || (loaded<=0&&trig&&dryT<=0))){
+    relT=WP.rel; ejd=false; ldd=false; snB=false; dryT=0;
+  }
+  reloadReq=false;
+  // 과열 시 총열이 헛도는 흔들림 가중치
+  const rw=over?0.10+0.06*Math.sin(t*30.0):0;
+  muzzle=Math.max(0,muzzle-dt*16);
+  recoil=Math.max(0,recoil-dt*WP.vdec);
+  jolt=Math.max(0,jolt-dt*13);
+  shakeX*=0.86;shakeY*=0.86;
+
+  // 카메라 + 모델 배치
+  let cam,gunM;
+  if(mode===1){
+    if(autoTurn)turn+=dt*0.55;
+    cam=mMul(mMul(mMul(mT(0,0.55,0),mRY(oYaw)),mRX(oPitch)),mT(0,0,oDist));
+    gunM=mMul(mMul(mMul(mT(0,0.55,0),mRY(turn)),mRX(-0.35*rw)),mT(0,0,0.18));
+  }else{
+    cam=mMul(mMul(mT(px,py,pz),mRY(yaw+shakeX)),mRX(pitch+shakeY));
+    const sway=Math.sin(bob*0.5)*0.006;
+    /* 정지 시 아이들 흔들림 — 서로 나누어떨어지지 않는 주파수를 겹쳐
+       주기가 눈에 띄지 않게 한다. 이동·사격·재장전 중에는 빠르게 사라진다. */
+    idle=Math.max(0,Math.min(1,idle+((mv||fire||relT>0)?-dt*4.0:dt*1.2)));
+    const iX =(Math.sin(t*0.91)*0.0055+Math.sin(t*1.73+1.2)*0.0021)*idle;
+    const iY =(Math.sin(t*1.27+0.7)*0.0042+Math.sin(t*2.61)*0.0015)*idle;
+    const iZ = Math.sin(t*0.63+2.1)*0.0030*idle;
+    const iRX=(Math.sin(t*1.09+1.4)*0.0105+Math.sin(t*2.33)*0.0035)*idle;
+    const iRY= Math.sin(t*0.77)*0.0130*idle;
+    const iRZ= Math.sin(t*0.85+0.5)*0.0150*idle;
+    gunM=mMul(cam,mMul(mMul(mMul(
+            mT(WP.vm[0]+sway-0.03*rw-0.012*rlp+iX,
+               WP.vm[1]+Math.sin(bob)*0.010-0.085*rw+recoil*0.012-0.040*rlp+jolt*0.016+iY,
+               WP.vm[2]+recoil*WP.vpush+0.04*rw+0.026*rlp+iZ),
+            mRY(-0.055+0.10*rlp+iRY)),
+            mRX(0.02+recoil*0.055-0.50*rw-0.20*rlp+jolt*0.13+iRX)),
+            mRZ(0.35*rw+0.20*rlp+iRZ)));
+  }
+  const view=mInvRigid(cam);
+  const proj=mPersp(mode===1?0.85:1.19,W/Hh,0.012,90);
+  const spinM = WP.kind===0 ? mMul(gunM,mRZ(spin))
+    : WP.kind===2 ? mMul(gunM,mT(0,0,slideZ))
+    : mMul(gunM,mMul(mMul(mT(0,-0.045,-0.015),mRX(-brk*0.78)),mT(0,0.045,0.015)));
+  const magM = mMul(gunM,mT(0,-magDrop,0));
+  const muzWorld=xf(gunM,[WP.twin?(shotSide?WP.twin:-WP.twin):0,0,WP.muz]);
+  const fwd=rot3(gunM,[0,0,-1]);
+  if(relU>0){
+    /* 탄피 배출 시점: 브레이크식은 개방 스냅에서 모아둔 탄피를 한꺼번에,
+       슬라이드식은 발사할 때 이미 나갔으므로 여기서는 탄창 이탈 충격만. */
+    const ejAt = WP.kind===2 ? 0.18 : 0.12;
+    if(!ejd&&relU>ejAt){ ejd=true;
+      if(spent>0){
+        jolt=0.60; shakeX=rnd(0.012); shakeY=rnd(0.010);
+        for(let i=0;i<spent;i++)
+          ejectShell(gunM,WP,[(i?1:-1)*0.032,0.012,-0.048],[0.40,4.6,-1.0]);
+        spent=0;
+        smokePuff(xf(gunM,[0,0.02,-0.05]),[0,1,0],1.4);
+      } else { jolt=0.38; shakeY=rnd(0.006); }      // 탄창 이탈
+    }
+    const ldAt = WP.kind===2 ? 0.76 : 0.42;         // 탄창 삽입 시점
+    if(!ldd&&relU>ldAt){ ldd=true;
+      const take=Math.min(WP.mag,ammo); loaded=take; ammo-=take;
+      if(WP.kind===2){ jolt=0.70; shakeX=rnd(0.008); shakeY=rnd(0.008); }
+    }
+    // 폐쇄 슬램 — 가장 큰 충격
+    if(WP.kind===2&&!snB&&relU>0.88){ snB=true; jolt=0.85;
+      recoil=Math.max(recoil,0.5); shakeX=rnd(0.010); shakeY=rnd(0.008); }
+    if(WP.kind!==2&&!snB&&relU>0.68){ snB=true; jolt=1.0;
+      recoil=Math.max(recoil,0.85);
+      shakeX=rnd(0.026); shakeY=rnd(0.020);
+      const bp=xf(gunM,[0,0.015,-0.048]);
+      for(let i=0;i<6;i++)
+        spawnP({p:bp.slice(),v:[rnd(1.6),0.4+Math.random()*1.1,rnd(1.6)],
+                t:0,l:0.12+Math.random()*0.12,s0:0.011,s1:0.002,i0:3.2,i1:0,
+                c:[1.0,0.80,0.46],k:1,g:8,dr:2.4,st:0,ov:1});
+    }
+  }
+  if(shot){
+    muzzleFX(muzWorld,fwd,WP.flash);
+    for(let i=0;i<WP.pellets;i++) tracer(muzWorld,fwd,WP.spread);
+    if(WP.ejShot) ejectShell(gunM,WP);
+    if(WP.mag>0||((ammo&3)===0)) smokePuff(muzWorld,fwd,WP.smoke/0.055);
+  }
+
+  // 과열 중 방아쇠를 당기면 헛도는 클릭
+  if(over&&trig){
+    clickT-=dt;
+    if(clickT<=0){
+      clickT=0.13; recoil=0.22; shakeX=rnd(0.004); shakeY=rnd(0.003);
+      const bp=xf(gunM,[0,0.02,-0.10]);
+      for(let i=0;i<3;i++)
+        spawnP({p:bp.slice(),v:[rnd(1.2),0.5+Math.random()*0.9,rnd(1.2)],
+                t:0,l:0.14+Math.random()*0.12,s0:0.010,s1:0.002,i0:2.6,i1:0,
+                c:[1.0,0.74,0.34],k:1,g:7,dr:2,st:0,ov:1});
+    }
+  }
+  // 달아오르면 하우징에서 열기가 새어나온다
+  if(heat>RESET_AT&&Math.random()<dt*heat*16){
+    const hp=xf(gunM,[rnd(0.06),0.09,-0.10+rnd(0.06)]);
+    spawnP({p:hp,v:[rnd(0.25),0.55+Math.random()*0.5,rnd(0.25)],
+            t:0,l:0.6+Math.random()*0.5,s0:0.035,s1:0.20,i0:0.26*heat,i1:0,
+            c:[0.36,0.33,0.32],k:3,g:-0.5,dr:2.0,st:0,rt:Math.random()*6.28,ov:0,sm:1});
+  }
+
+  // 파티클
+  for(let i=parts.length-1;i>=0;i--){
+    const q=parts[i]; q.t+=dt;
+    if(q.t>=q.l){parts.splice(i,1);continue;}
+    q.v[1]-=q.g*dt;
+    if(q.dr>0){const k=Math.exp(-q.dr*dt);q.v[0]*=k;q.v[1]*=k;q.v[2]*=k;}
+    q.p[0]+=q.v[0]*dt;q.p[1]+=q.v[1]*dt;q.p[2]+=q.v[2]*dt;
+    if(q.hit&&q.p[1]<=0.004){q.p[1]=0.004;impactFX(q);parts.splice(i,1);}
+  }
+  // 탄피 — 중력 + 바닥 반발
+  for(let i=shells.length-1;i>=0;i--){
+    const c=shells[i]; c.t+=dt;
+    if(c.t>4.2){shells.splice(i,1);continue;}
+    c.v[1]-=12*dt;
+    c.p[0]+=c.v[0]*dt;c.p[1]+=c.v[1]*dt;c.p[2]+=c.v[2]*dt;
+    c.r[0]+=c.w[0]*dt;c.r[1]+=c.w[1]*dt;c.r[2]+=c.w[2]*dt;
+    if(c.p[1]<0.006&&c.v[1]<0){c.p[1]=0.006;c.v[1]*=-0.34;
+      c.v[0]*=0.62;c.v[2]*=0.62;c.w[0]*=0.5;c.w[1]*=0.5;c.w[2]*=0.5;}
+  }
+  // 탄약 아이템 — 근접 시 획득, 8초 후 리스폰
+  for(const it of pickups){
+    if(!it.on){ it.rt-=dt; if(it.rt<=0)it.on=true; continue; }
+    if(mode===0&&ammoOf(it.w)<AMMOMAX&&Math.hypot(it.p[0]-px,it.p[2]-pz)<1.25){
+      giveAmmo(it.w,WEAPONS[it.w].pickup); it.on=false; it.rt=8;
+      for(let k=0;k<14;k++)
+        spawnP({p:it.p.slice(),v:[rnd(2.2),1.0+Math.random()*2.2,rnd(2.2)],
+                t:0,l:0.4+Math.random()*0.3,s0:0.018,s1:0.004,i0:3,i1:0,
+                c:[[0.55,1.0,0.55],[1.0,0.76,0.35],[1.0,0.42,0.36]][it.w],
+                k:1,g:5,dr:1.0,st:0,ov:0});
+    }
+  }
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER,sceneFBO);
+  gl.viewport(0,0,W,Hh);
+  gl.clearColor(0.30,0.31,0.34,1);
+  gl.enable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  gl.useProgram(mainProg);
+  gl.uniformMatrix4fv(U.uProj,false,proj);
+  gl.uniformMatrix4fv(U.uView,false,view);
+  gl.uniform3f(U.uCam,cam[12],cam[13],cam[14]);
+  if(mode===1){gl.uniform3fv(U.uLP,SP);}
+  else{ // 조명 리그를 카메라에 붙여 뷰모델이 항상 같은 각도로 빛을 받게 한다
+    for(let i=0;i<6;i++){
+      const q=xf(cam,[SP[i*3]+0.20,SP[i*3+1]-0.75,SP[i*3+2]-0.34]);
+      LBUF[i*3]=q[0];LBUF[i*3+1]=q[1];LBUF[i*3+2]=q[2];
+    }
+    gl.uniform3fv(U.uLP,LBUF);
+  }
+  gl.uniform3fv(U.uLC,SC);
+  gl.uniform1i(U.uStudio,1);
+  gl.uniform3fv(U.uMuzP,new Float32Array(muzWorld));
+  const mi=muzzle*(0.7+0.3*Math.random());
+  gl.uniform3f(U.uMuzC,26*mi*WP.mfl,17*mi*WP.mfl,7*mi*WP.mfl);
+  gl.uniform3f(U.uFlashP,cam[12],cam[13],cam[14]);
+  gl.uniform3f(U.uFlashD,-cam[8],-cam[9],-cam[10]);
+  gl.uniform1f(U.uFlashI,0.0);
+  gl.uniform1f(U.uTime,t);
+  gl.uniform1i(U.uDebug,debug);
+  gl.uniform1i(U.uAmmo,(over||relT>0)?-1:ammo);
+  gl.uniform1f(U.uHeat,heat);
+  gl.uniform3fv(U.uAccent,lin(TP.accent));
+  gl.uniform3fv(U.uPaint,lin(TP.paint));
+  for(let i=0;i<3;i++){gl.activeTexture(gl.TEXTURE0+i);gl.bindTexture(gl.TEXTURE_2D,TEX[0][i]);
+    gl.uniform1i(U["tA"+i],i);}
+  for(let i=0;i<3;i++){gl.activeTexture(gl.TEXTURE3+i);gl.bindTexture(gl.TEXTURE_2D,TEX[1][i]);
+    gl.uniform1i(U["tB"+i],3+i);}
+  for(let i=0;i<3;i++){gl.activeTexture(gl.TEXTURE6+i);gl.bindTexture(gl.TEXTURE_2D,TEX[2][i]);
+    gl.uniform1i(U["tC"+i],6+i);}
+
+  function draw(mesh,M){
+    gl.uniformMatrix4fv(U.uModel,false,M);
+    gl.uniformMatrix3fv(U.uNM,false,m3of(M));
+    gl.bindVertexArray(mesh.vao);
+    gl.drawArrays(gl.TRIANGLES,0,mesh.count);
+  }
+  draw(mGrid,mI());
+  for(const it of pickups) if(it.on)
+    draw(mPick[it.w],mMul(mT(it.p[0],it.p[1]+Math.sin(t*2.2+it.p[0])*0.06,it.p[2]),mRY(t*0.9)));
+  for(const c of shells)
+    draw(c.s?mShot:mShell,
+         mMul(mMul(mMul(mT(c.p[0],c.p[1],c.p[2]),mRY(c.r[1])),mRX(c.r[0])),mRZ(c.r[2])));
+  // 뷰모델은 좁은 뎁스 레인지에 밀어넣어 월드를 관통하지 않게 한다 (뎁스 클리어 대신)
+  if(mode===0)gl.depthRange(0,0.12);
+  const G=WEP[wi];
+  draw(G.stat,gunM);
+  draw(G.spin,spinM);
+  draw(G.magm,magM);
+  if(showHands){draw(G.hands,gunM);draw(G.hmov,spinM);}
+  gl.depthRange(0,1);
+
+  // 파티클 — 프리멀티플라이드 가산, 뎁스 쓰기 없음
+  if(parts.length){
+    gl.useProgram(partProg);
+    gl.uniformMatrix4fv(QU.uProj,false,proj);
+    gl.uniformMatrix4fv(QU.uView,false,view);
+    gl.uniform3f(QU.uCam,cam[12],cam[13],cam[14]);
+    gl.bindVertexArray(partVAO);
+    gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);gl.depthMask(false);
+    const emit=(list,depth)=>{
+      let n=0;
+      for(const q of list){
+        const u=q.t/q.l,o=n*13;
+        PINST[o]=q.p[0];PINST[o+1]=q.p[1];PINST[o+2]=q.p[2];
+        PINST[o+3]=q.s0+(q.s1-q.s0)*u;
+        PINST[o+4]=q.st;
+        PINST[o+5]=Math.max(0,q.i0+(q.i1-q.i0)*u);
+        PINST[o+6]=q.k;
+        PINST[o+7]=q.c[0];PINST[o+8]=q.c[1];PINST[o+9]=q.c[2];
+        // stretch>0 이면 진행방향, 아니면 스프라이트 롤 각도
+        if(q.st>0){PINST[o+10]=q.v[0];PINST[o+11]=q.v[1];PINST[o+12]=q.v[2];}
+        else {PINST[o+10]=q.rt||0;PINST[o+11]=0;PINST[o+12]=0;}
+        if(++n>=PMAX)break;
+      }
+      if(!n)return;
+      if(depth)gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);
+      gl.bindBuffer(gl.ARRAY_BUFFER,partIB);
+      gl.bufferSubData(gl.ARRAY_BUFFER,0,PINST,0,n*13);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,n);
+    };
+    // 연기는 알파 블렌딩 — 가산으로는 밝은 배경에서 아예 보이지 않는다.
+    // 출력이 프리멀티플라이드이므로 (ONE, ONE_MINUS_SRC_ALPHA) 가 맞다.
+    gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+    emit(parts.filter(q=>q.sm),true);
+    gl.blendFunc(gl.ONE,gl.ONE);
+    emit(parts.filter(q=>!q.ov&&!q.sm),true);   // 월드 (예광탄·스파크)
+    emit(parts.filter(q=>q.ov),false);          // 총구 화염 — 총기 위에 항상 표시
+    gl.enable(gl.DEPTH_TEST);gl.depthMask(true);gl.disable(gl.BLEND);
+    gl.bindVertexArray(null);
+  }
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,W,Hh);
+  gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(postProg);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,sceneTex);
+  gl.uniform1i(PU.uS,0);gl.uniform2f(PU.uRes,W,Hh);
+  gl.uniform1f(PU.uTime,t);gl.uniform1i(PU.uDebug,debug);
+  gl.uniform1i(PU.uStudio,1);
+  gl.bindVertexArray(null);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -37,6 +37,7 @@ compare exe output against tool output.
 | `ref/*.svg` | deck plan, input to `tools/deckplan.py` |
 | `docs/` | FILEMAP, engineering notes, design docs, this index |
 | `archive/` | contest-era docs, unmaintained |
+| `making/` | prototypes and concept art each piece started from; not built |
 
 ## Data flow
 

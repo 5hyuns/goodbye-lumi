@@ -71,6 +71,8 @@ story/              dialogue, scenes and encounters as data
 ref/                the deck plan the whole ship is built from
 docs/               file map, engineering notes, original design documents
 archive/            documents from the contest period, kept as a record
+making/             the HTML prototypes, concept sheets and design notes each
+                    piece started from
 ```
 
 - [`docs/FILEMAP.md`](docs/FILEMAP.md) lists every file and what it does.

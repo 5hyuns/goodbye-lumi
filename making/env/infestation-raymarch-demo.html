@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDF 레이마칭 감염 복도</title>
+<style>
+  html,body{margin:0;background:#05070c;color:#c9d1e0;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:960px;margin:0 auto;padding:20px 16px 40px}
+  canvas{display:block;width:100%;height:460px;border-radius:6px;background:#05070c}
+  .bar{display:flex;flex-wrap:wrap;gap:18px;align-items:center;margin-top:14px}
+  .bar label{display:flex;align-items:center;gap:10px}
+  input[type=range]{width:200px;accent-color:#c86bea}
+  #stats{margin-top:10px;color:#7f8aa3;font-size:14px}
+  #stats b{color:#c9d1e0;font-weight:500}
+  p.note{color:#7f8aa3;font-size:14px;margin:6px 0 0}
+</style>
+</head>
+<body>
+<main>
+  <canvas id="c"></canvas>
+  <div class="bar">
+    <label>감염도 <input id="lv" type="range" min="0" max="100" value="60"> <span id="lvv">0.60</span></label>
+    <label>융합 <input id="k" type="range" min="0" max="100" value="55"> <span id="kv">0.55</span></label>
+    <label>호흡 <input id="br" type="range" min="0" max="100" value="50"> <span id="brv">0.50</span></label>
+  </div>
+  <div id="stats"></div>
+  <p class="note">폴리곤이 하나도 없습니다. 복도와 유기체 전부가 거리 함수(SDF) 하나이고, 화면의 픽셀마다 광선을 전진시켜 표면을 찾습니다. 유기체는 벽 밖에 심은 구체들이 벽 안쪽으로 부풀어 나온 것이며, 구체끼리는 부드럽게 융합됩니다. 함선 벽은 흔들리지 않고 유기체만 숨 쉽니다.</p>
+</main>
+<script id="fs" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2 uRes; uniform float uTime, uLevel, uK, uBreath;
+const int MAX_STEPS = 110;
+const int NUM_BLOBS = 7;
+float hash(float n){ return fract(sin(n)*43758.5453); }
+float smin(float a, float b, float k){ float h = clamp(0.5+0.5*(b-a)/k, 0.0, 1.0); return mix(b, a, h) - k*h*(1.0-h); }
+float sdCorridor(vec3 p){ return min(2.0-abs(p.x), min(p.y, 3.0-p.y)); }
+float growth(float z){ return uLevel*(0.55+0.45*smoothstep(0.0, 22.0, -z)); }
+float sdOrganism(vec3 p){
+  float g = growth(p.z);
+  if (g < 0.02) return 100.0;
+  vec3 q = p;
+  q.y += sin(q.z*0.8+uTime*0.9)*0.10*g*uBreath;
+  q.x += sin(q.y*1.4+uTime*0.6+q.z*0.3)*0.08*g*uBreath;
+  float T = 3.0;
+  float o = floor((q.z+T*0.5)/T);
+  q.z = mod(q.z+T*0.5, T) - T*0.5;
+  float d = 100.0;
+  for (int i = 0; i < NUM_BLOBS; i++){
+    float fi = float(i);
+    float h1 = hash(o*7.13+fi*3.31), h2 = hash(o*5.71+fi*2.17+1.7), h3 = hash(o*3.37+fi*4.91+2.9);
+    vec3 c;
+    if (h1 < 0.34)      c = vec3( 2.3, 0.2+h2*2.6, (h3-0.5)*2.6);
+    else if (h1 < 0.68) c = vec3(-2.3, 0.2+h2*2.6, (h3-0.5)*2.6);
+    else if (h1 < 0.88) c = vec3((h2-0.5)*3.4, 3.3, (h3-0.5)*2.6);
+    else                c = vec3(sign(h2-0.5)*1.9, -0.25, (h3-0.5)*2.6);
+    float r = (0.55+h2*0.55)*g*(1.0+0.06*uBreath*sin(uTime*1.7+o*1.3+fi));
+    d = smin(d, length(q-c)-r, 0.25+uK*0.6);
+  }
+  return d;
+}
+float dfDist(vec3 p){ return min(sdCorridor(p), sdOrganism(p)); }
+vec3 dfNormal(vec3 p){ const float E = 0.015; float d0 = dfDist(p);
+  return normalize(vec3(dfDist(p+vec3(E,0,0))-d0, dfDist(p+vec3(0,E,0))-d0, dfDist(p+vec3(0,0,E))-d0)); }
+float dfOcclusion(vec3 p, vec3 n){ const float N = 0.7; return clamp(dfDist(p+n*N)/N, 0.0, 1.0); }
+float trace(inout vec3 pos, vec3 dir){
+  int steps = 0;
+  for (int i = 0; i < MAX_STEPS; i++){ steps++; float d = dfDist(pos); pos += d*dir; if (d < 0.001 || pos.z < -80.0) break; }
+  return float(steps)/float(MAX_STEPS);
+}
+void main(){
+  vec2 fc = gl_FragCoord.xy;
+  vec3 opos = vec3(sin(uTime*0.35)*0.25, 1.55+sin(uTime*0.5)*0.05, -uTime*0.9);
+  vec3 pos = opos;
+  vec3 dir = normalize(vec3((fc.x-uRes.x*0.5)/uRes.y, (fc.y/uRes.y-0.5)*0.85, -1.0));
+  float steps = trace(pos, dir);
+  vec3 n = dfNormal(pos);
+  float occ = dfOcclusion(pos, n);
+  bool organic = sdOrganism(pos) < sdCorridor(pos);
+  float g = growth(pos.z);
+  vec3 lightDir = normalize(vec3(0.4, 0.7, 0.6));
+  float dif = max(dot(n, lightDir), 0.0);
+  vec3 color;
+  if (organic){
+    vec3 ambient = vec3(0.34, 0.17, 0.22);
+    vec3 diffuse = vec3(0.55, 0.42, 0.50)*dif;
+    color = (ambient+diffuse)*(1.0-steps*0.9) + pow(1.0-occ, 1.6)*vec3(0.95, 0.55, 0.75)*0.55;
+  } else {
+    vec3 ambient = vec3(0.10, 0.12, 0.16);
+    vec3 diffuse = vec3(0.22, 0.26, 0.32)*dif;
+    color = (ambient+diffuse)*(1.0-steps*0.8)*occ*1.2;
+    float strip = step(1.8, abs(pos.x))*step(pos.y, 0.05) + step(abs(pos.x), 0.05)*step(2.96, pos.y);
+    vec3 stripCol = mix(vec3(0.43, 0.83, 0.91), vec3(0.78, 0.42, 0.92), smoothstep(0.35, 0.7, g));
+    color += strip*stripCol*(1.0-smoothstep(0.6, 0.95, g))*1.4;
+    float seam = smoothstep(0.02, 0.0, abs(fract(pos.z*0.5)-0.5)-0.49);
+    color -= seam*0.03;
+  }
+  float fogAmt = 1.0 - exp(-distance(opos, pos)*0.045);
+  vec3 fogCol = mix(vec3(0.03, 0.04, 0.06), vec3(0.16, 0.09, 0.13), uLevel);
+  color = mix(color, fogCol, fogAmt);
+  color = (1.0-exp(-color*1.6))*1.25;
+  gl_FragColor = vec4(color, 1.0);
+}
+</script>
+<script>
+const cv=document.getElementById('c'); const gl=cv.getContext('webgl');
+const vs='attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
+const fsrc=document.getElementById('fs').textContent;
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(o));return o}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fsrc));gl.linkProgram(pr);gl.useProgram(pr);
+const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+const loc=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+const uRes=gl.getUniformLocation(pr,'uRes'),uTime=gl.getUniformLocation(pr,'uTime'),uLevel=gl.getUniformLocation(pr,'uLevel'),uK=gl.getUniformLocation(pr,'uK'),uBr=gl.getUniformLocation(pr,'uBreath');
+const lv=document.getElementById('lv'),k=document.getElementById('k'),br=document.getElementById('br');
+const upd=()=>{document.getElementById('lvv').textContent=(lv.value/100).toFixed(2);document.getElementById('kv').textContent=(k.value/100).toFixed(2);document.getElementById('brv').textContent=(br.value/100).toFixed(2)};
+[lv,k,br].forEach(e=>e.addEventListener('input',upd));upd();
+const bytes=new Blob([fsrc]).size;
+document.getElementById('stats').innerHTML=`셰이더 코드 <b>${(bytes/1024).toFixed(1)}KB</b> · 폴리곤 <b>0</b> · 저장 데이터: 감염도 1개`;
+const t0=performance.now();
+(function loop(){requestAnimationFrame(loop);
+  const w=Math.floor(cv.clientWidth*0.6),h=Math.floor(cv.clientHeight*0.6);
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;gl.viewport(0,0,w,h)}
+  gl.uniform2f(uRes,w,h);gl.uniform1f(uTime,(performance.now()-t0)/1000);
+  gl.uniform1f(uLevel,lv.value/100);gl.uniform1f(uK,k.value/100);gl.uniform1f(uBr,br.value/100);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4)})();
+</script>
+</body>
+</html>

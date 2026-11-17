@@ -1,0 +1,644 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Prop Bench — Derelict</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0908;color:#cfcac2;font:13px/1.4 -apple-system,Segoe UI,sans-serif;overflow:hidden}
+  #gl{position:absolute;inset:0;display:block;cursor:grab}
+  #gl.drag{cursor:grabbing}
+  #banner{position:absolute;top:0;left:0;right:0;background:#5a1f14;color:#ffd9c9;padding:8px 14px;font-size:12px;display:none;z-index:20}
+  #hud{position:absolute;left:14px;top:14px;max-width:280px;pointer-events:none}
+  #hud h1{font-size:16px;margin:0 0 2px;font-weight:600;color:#e8e2d6;letter-spacing:.02em}
+  #hud .sub{font-size:12px;color:#8f8a80}
+  #hud .room{display:inline-block;margin-top:6px;padding:2px 7px;border:1px solid #4a443a;border-radius:3px;font-size:11px;color:#c9a15a}
+  #list{position:absolute;right:0;top:0;bottom:0;width:220px;background:#111009cc;border-left:1px solid #2a2620;overflow-y:auto;padding:10px 0}
+  #list h2{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#7a7568;margin:14px 14px 4px;border-top:1px solid #2a2620;padding-top:10px}
+  #list h2:first-child{border-top:none;margin-top:0}
+  .item{padding:6px 14px;cursor:pointer;color:#ada894;border-left:2px solid transparent}
+  .item:hover{background:#1c1912;color:#e8e2d6}
+  .item.on{background:#241f14;color:#f2ce8f;border-left-color:#c9a15a}
+  .item small{display:block;color:#726d61;font-size:10px}
+  #modes{position:absolute;left:14px;bottom:14px;display:flex;gap:4px}
+  #modes button{background:#161310;border:1px solid #332e24;color:#a9a494;padding:6px 10px;font-size:11px;cursor:pointer;border-radius:3px}
+  #modes button.on{background:#3a2f18;color:#f2ce8f;border-color:#6b5730}
+  #keys{position:absolute;left:14px;bottom:52px;font-size:11px;color:#6f6a5e}
+  #stat{position:absolute;right:230px;top:14px;font-size:11px;color:#6f6a5e;text-align:right}
+</style>
+</head>
+<body>
+<div id="banner">file:// blocks module/texture loading in Chrome — serve this folder over HTTP, e.g. <code>python -m http.server</code> in <code>props/</code>, then open http://localhost:8000/propview.html</div>
+<canvas id="gl"></canvas>
+<div id="hud">
+  <h1 id="pname">—</h1>
+  <div class="sub" id="psub">—</div>
+  <span class="room" id="proom">—</span>
+</div>
+<div id="stat"></div>
+<div id="list"></div>
+<div id="modes">
+  <button data-m="0" class="on">Lit</button>
+  <button data-m="1">Albedo</button>
+  <button data-m="2">Normal</button>
+  <button data-m="3">Rough</button>
+  <button data-m="4">Emissive</button>
+</div>
+<div id="keys">drag: orbit &middot; wheel: zoom &middot; 1-9: jump prop</div>
+
+<script src="propkit.js"></script>
+<script>
+if (location.protocol === 'file:') document.getElementById('banner').style.display = 'block';
+
+const OCHRE = [0.560, 0.330, 0.062], AMBER = [1.00, 0.520, 0.130],
+      LIVE_C = [0.180, 0.580, 0.780], LIVE_G = [0.200, 0.720, 0.280];
+const ROOMS = { quarters: '승무원 숙소 · Crew Quarters', lobby: '로비 · 갤러리 · Lobby / Gallery', mess: '식당 · Mess Hall',
+                medbay: '의무실 · Medbay', storage: '창고 · Storage', cargo: '화물칸 · Cargo Bay',
+                engine: '기관실 · Engine Room', garden: '수경 정원 · Garden' };
+const ROOM_ORDER = ['quarters', 'lobby', 'mess', 'medbay', 'storage', 'cargo', 'engine', 'garden'];
+
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { antialias: true });
+if (!gl) { document.getElementById('banner').textContent = 'WebGL2 is not available in this browser.'; document.getElementById('banner').style.display = 'block'; throw new Error('no webgl2'); }
+gl.getExtension('EXT_color_buffer_float');
+
+// ---- shared height-field library + pattern kinds, per
+// ref/procedural-scifi-normal-spec.md section 2 (verbatim) and section 3-7
+// (design grammar). One bake pass per region: height is re-evaluated at
+// four neighbouring points to get the gradient directly (spec section 8.7),
+// no separate normal-from-texture pass needed.
+const LIB_GLSL = `
+#define PI 3.14159265
+float wx(float x){ return x - floor(x + 0.5); }
+float triw(float x){ return abs(fract(x) - 0.5) * 2.0; }
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.545); }
+float vnoise(vec2 p){   // bilinear value noise -- h21 alone aliases into hard-edged static
+  vec2 i=floor(p), f=fract(p);
+  float a=h21(i), b=h21(i+vec2(1.0,0.0)), c=h21(i+vec2(0.0,1.0)), d=h21(i+vec2(1.0,1.0));
+  vec2 u=f*f*(3.0-2.0*f);
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+float sdB(vec2 p, vec2 b){ vec2 d = abs(p) - b; return length(max(d,0.0)) + min(max(d.x,d.y),0.0); }
+float sdR(vec2 p, vec2 b, float r){ return sdB(p, b - vec2(r)) - r; }
+float sdA(vec2 p, float r, float w){ return abs(length(p) - r) - w; }
+float cham(float d, float w){ return clamp(-d/w, 0.0, 1.0); }
+float rndp(float d, float r){ float t = clamp(-d/r,0.0,1.0); return sqrt(t*(2.0-t)); }
+float domep(vec2 p, float r){ float l = min(length(p)/r, 1.0); return sqrt(1.0 - l*l); }
+float boltp(vec2 p, float r){ return domep(p, r) * 0.85 - cham(sdA(p, r*1.55, r*0.18), r*0.22) * 0.30; }
+
+float H_panel(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h = 0.30;
+  float mgn = min(0.030, min(hx,hy)*0.30);
+  vec2 b = vec2(hx-mgn, hy-mgn);
+  // tight corner radius + shallower step: machined plate, not moulded pillow
+  h += cham(sdR(p, b, min(0.012,mgn)), 0.018) * 0.22;
+  h -= cham(sdR(p, b*0.86, min(0.010,mgn*0.7)), 0.010) * 0.10;
+  h -= cham(sdB(p, b*0.80), 0.006) * 0.07;
+  if(pr.x>0.5){
+    float br = min(0.024, min(hx,hy)*0.10);
+    vec2 cc = b - vec2(br*1.8);
+    h += boltp(p - vec2(-cc.x,-cc.y), br) * 0.26;
+    h += boltp(p - vec2( cc.x,-cc.y), br) * 0.26;
+    h += boltp(p - vec2(-cc.x, cc.y), br) * 0.26;
+    h += boltp(p - vec2( cc.x, cc.y), br) * 0.26;
+  }
+  return h;
+}
+float H_rib(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h = 0.20;
+  float count = max(2.0, pr.x);
+  float pitch = ww/count;
+  float rx = mod(p.x + hx + pitch*0.5, pitch) - pitch*0.5;
+  h += domep(vec2(rx,0.0), pitch*0.30) * 0.42 * step(abs(p.y), hy-0.02);
+  h -= cham(sdB(p, vec2(hx-0.010, hy-0.010)), 0.010) * 0.14;
+  h += cham(sdB(vec2(0.,p.y-hy+0.05), vec2(hx-0.006,0.05)), 0.012) * 0.20;
+  h += cham(sdB(vec2(0.,p.y+hy-0.05), vec2(hx-0.006,0.05)), 0.012) * 0.20;
+  return h;
+}
+float H_screen(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h = 0.32;
+  vec2 b = vec2(max(0.01,hx-0.024), max(0.01,hy-0.024));
+  h += cham(sdR(p,b,min(0.016,min(b.x,b.y)*0.5)), 0.014)*0.30;
+  vec2 sb = max(vec2(0.006), b - vec2(0.020));
+  h -= cham(sdR(p, sb, min(0.006,min(sb.x,sb.y)*0.4)), 0.010) * 0.26;
+  return h;
+}
+float H_buttons(vec2 p, float ww, float wh, float seed){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.28;
+  h += cham(sdR(p, vec2(max(0.01,hx-0.018),max(0.01,hy-0.018)), 0.010), 0.010)*0.20;
+  vec2 area = vec2(max(0.05,ww-0.050), max(0.05,wh-0.050));
+  float cx = area.x/5.0, cy = area.y/3.0;
+  float px_ = mod(p.x + area.x*0.5, cx) - cx*0.5;
+  float py_ = mod(p.y + area.y*0.5, cy) - cy*0.5;
+  float inField = step(abs(p.x), area.x*0.5) * step(abs(p.y), area.y*0.5);
+  h -= cham(sdR(vec2(px_,py_), vec2(cx*0.36, cy*0.30), 0.006), 0.007) * 0.22 * inField;
+  return h;
+}
+float H_hazard(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.20;
+  float hz = triw((p.x*2.2 + p.y*6.0));
+  h += cham(hz-0.5, 0.14)*0.10;
+  // pr.y > 0.5: frameless. A band wrapping curved geometry (a drum's
+  // eight shared faces) must not draw a plaque lip on every facet.
+  if(pr.y < 0.5) h += cham(sdB(p, vec2(max(0.002,hx-0.008),max(0.002,hy-0.008))), 0.008)*0.14;
+  return h;
+}
+float H_valve(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float R = min(hx,hy)-0.012;
+  float h = 0.0;
+  h += cham(sdA(p, R*0.30, R*0.14), 0.014)*0.30;
+  float r = length(p), a = atan(p.y,p.x);
+  float n = max(3.0, pr.x);
+  float seg = 6.2831853/n;
+  float a2 = mod(a+seg*0.5, seg)-seg*0.5;
+  vec2 sp = vec2(cos(a2), sin(a2))*r;
+  float spoke = 0.30 + rndp(sdR(sp - vec2(R*0.62,0.0), vec2(R*0.34,R*0.09), R*0.05), R*0.05) * 0.34
+                * step(r, R*0.98) * step(R*0.30, r);
+  h = max(h, spoke);
+  h += boltp(p, R*0.14) * 0.30;
+  h += cham(sdA(p, R*0.98, R*0.05), 0.010)*0.20;
+  return h;
+}
+float H_seam(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.22;
+  h -= cham(sdB(vec2(0.,p.y), vec2(max(0.01,hx-0.010), 0.006)), 0.006)*0.20;
+  float n = max(2.0, floor(ww/0.09));
+  float pitch = ww/n;
+  float bx = mod(p.x + hx + pitch*0.5, pitch) - pitch*0.5;
+  h += boltp(vec2(bx, p.y), min(0.014, pitch*0.28)) * 0.24 * step(abs(p.y), 0.018);
+  return h;
+}
+float H_pipe(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.30;
+  bool vertical = pr.x>0.5;
+  float along = vertical? p.y : p.x;
+  float across = vertical? p.x : p.y;
+  float halfAcross = vertical? hx : hy;
+  h = max(h, 0.30 + domep(vec2(across,0.0), halfAcross*0.94)*0.30);
+  float pitch = 0.14;
+  float ring = mod(along + pitch*0.5, pitch) - pitch*0.5;
+  h -= cham(abs(ring)-0.010, 0.006) * 0.10;
+  return h;
+}
+// CLEAN METAL HAS NO NOISE IN ITS HEIGHT (project memory): machined SF
+// steel is flat; its variation lives in roughness and tone. The old
+// p*60 mill-scale mottle aliased into hammered-pewter static on every
+// shared strip the atlas packed small. Only a broad low-frequency sag
+// survives -- too slow to alias at any packing density.
+float H_plain(vec2 p, float seed){
+  return 0.30 + (vnoise(p*2.2 + seed*13.0)-0.5)*0.012;
+}
+// Foliage: no grid, no repeat unit -- everything else in this library reads
+// a rectangle's own width/height because it is describing a fabricated
+// part, and a leaf clump is the one surface here that is not fabricated.
+// Three octaves of plain value noise, un-anchored to ww/wh, so a garden
+// prop's crop and the ship's kit never share a tell.
+float H_foliage(vec2 p, float ww, float wh, float seed){
+  float h = 0.30;
+  h += (vnoise(p*3.2 + seed*7.0) - 0.5) * 0.34;      // big leaf lobes
+  h += (vnoise(p*7.0 + seed*19.0) - 0.5) * 0.16;      // mid clumps
+  h += (vnoise(p*16.0 + seed*31.0) - 0.5) * 0.04;     // leaf-edge grain (kept below aliasing)
+  return h;
+}
+float H(vec2 p, int kind, float seed, vec4 pr, float ww, float wh){
+  if(kind==0) return H_panel(p, ww, wh, pr);
+  if(kind==1) return H_rib(p, ww, wh, pr);
+  if(kind==2) return H_screen(p, ww, wh, pr);
+  if(kind==3) return H_buttons(p, ww, wh, seed);
+  if(kind==4) return H_hazard(p, ww, wh, pr);
+  if(kind==5) return H_valve(p, ww, wh, pr);
+  if(kind==6) return H_seam(p, ww, wh, pr);
+  if(kind==8) return H_pipe(p, ww, wh, pr);
+  if(kind==9) return H_foliage(p, ww, wh, seed);
+  return H_plain(p, seed);
+}
+`;
+
+const BAKE_VS = `#version 300 es
+void main(){
+  vec2 pos = vec2((gl_VertexID==2)?3.0:-1.0, (gl_VertexID==1)?3.0:-1.0);
+  gl_Position = vec4(pos,0.0,1.0);
+}`;
+
+const BAKE_FS = `#version 300 es
+precision highp float;
+${LIB_GLSL}
+uniform int uKind; uniform float uSeed; uniform vec4 uParams; uniform int uAccent;
+uniform float uWorldW, uWorldH; uniform vec2 uViewport; uniform vec2 uOrigin;
+uniform vec3 uTint; uniform int uPaint;
+layout(location=0) out vec4 oAlbedoRough;
+layout(location=1) out vec4 oNormalMetal;
+layout(location=2) out vec4 oEmissive;
+const vec3 OCHRE=vec3(0.560,0.330,0.062), AMBER=vec3(1.00,0.520,0.130),
+           LIVE_C=vec3(0.180,0.580,0.780), LIVE_G=vec3(0.200,0.720,0.280);
+void main(){
+  // gl_FragCoord is in WINDOW space -- absolute framebuffer pixels, not
+  // viewport-relative -- so every region packed anywhere but the atlas's
+  // own (0,0) origin was sampling this shader's whole pattern library from
+  // a wildly out-of-range p, off by however far the shelf-pack had moved
+  // it. uOrigin is that region's own (px,py) in the same absolute pixels,
+  // subtracted back out before the divide.
+  vec2 uv = (gl_FragCoord.xy - uOrigin) / uViewport;
+  vec2 p = (uv - 0.5) * vec2(uWorldW, uWorldH);
+  float hc = H(p, uKind, uSeed, uParams, uWorldW, uWorldH);
+  float e = max(0.0006, min(uWorldW,uWorldH) * 0.0022);
+  float dx = H(p+vec2(e,0.0), uKind,uSeed,uParams,uWorldW,uWorldH) - H(p-vec2(e,0.0), uKind,uSeed,uParams,uWorldW,uWorldH);
+  float dy = H(p+vec2(0.0,e), uKind,uSeed,uParams,uWorldW,uWorldH) - H(p-vec2(0.0,e), uKind,uSeed,uParams,uWorldW,uWorldH);
+  float S = 0.62;
+  vec3 n = normalize(vec3(-dx/(2.0*e)*S, -dy/(2.0*e)*S, 1.0));
+
+  // ramp pulled down to the mood ref's key: bare trim reads near-black
+  // gunmetal with edge specular, and anything BRIGHT has to earn it
+  // through a paint tint above 1.0 (P_STEEL, P_BONE)
+  vec3 SHADOW=vec3(0.085,0.084,0.081), MID=vec3(0.175,0.172,0.166), HI=vec3(0.285,0.280,0.270);
+  float t = clamp(hc, 0.0, 1.0);
+  vec3 albedo = t<0.5 ? mix(SHADOW,MID,t*2.0) : mix(MID,HI,(t-0.5)*2.0);
+  float ao = mix(0.55, 1.0, clamp(hc*1.2, 0.0, 1.0));
+  albedo *= ao;
+
+  vec3 emissive = vec3(0.0);
+  // relief lives in the ROUGHNESS register, not the height one (project
+  // memory: a bumpy surface with uniform specular is stone). Broad
+  // low-frequency variation only, so no packing density can alias it.
+  float rough = 0.30 + (vnoise(p*5.0 + uSeed*3.0) - 0.5) * 0.18;
+  float metal = 0.80;
+  albedo *= 0.93 + 0.14 * vnoise(p*1.7 + uSeed*9.0);   // tonal grime, edgeless
+  // paint scheme: the tint colours the ramp, and painted shells stop
+  // being metal -- a Doom-3 prop is painted panels over bare-metal trim,
+  // and the two-material split matters more than either alone. Worn
+  // low-frequency patches let the paint thin toward primer.
+  albedo *= uTint;
+  if(uPaint==1){
+    float wear = smoothstep(0.35, 0.75, vnoise(p*2.6 + uSeed*17.0));
+    albedo = mix(albedo, albedo*0.72 + vec3(0.035,0.030,0.024), wear*0.35);
+    metal = 0.16;
+    rough = min(0.78, rough + 0.20 + wear*0.10);
+  }
+
+
+  if(uKind==4){
+    float hz = triw((p.x*2.2+p.y*6.0));
+    float m = smoothstep(0.42,0.58,hz);
+    albedo = mix(albedo, OCHRE*ao, m*0.9);
+    metal = mix(metal, 0.0, m);
+    rough = mix(rough, 0.55, m);
+  }
+  if(uKind==2){
+    vec3 ac = uAccent==3 ? LIVE_C : (uAccent==4 ? LIVE_G : AMBER);
+    float hx=uWorldW*0.5-0.044, hy=uWorldH*0.5-0.044;
+    float inScreen = step(abs(p.x),max(0.0,hx)) * step(abs(p.y),max(0.0,hy));
+    // fine scanlines at low contrast -- a CRT, not a window blind
+    float sl = triw(p.y*140.0);
+    float glow = inScreen * mix(0.82,1.0, step(0.5,sl));
+    glow *= 0.88 + 0.12 * vnoise(p*vec2(1.0,40.0) + uSeed);   // faint row flicker
+    albedo = mix(albedo, ac*0.5, inScreen*0.7);
+    emissive = ac * glow * 1.25;
+    rough = mix(rough, 0.20, inScreen);
+    metal = mix(metal, 0.0, inScreen);
+  }
+  if(uKind==6 && uAccent>1){
+    vec3 ac = uAccent==2 ? AMBER : (uAccent==3 ? LIVE_C : LIVE_G);
+    float m = step(abs(p.y), 0.014);
+    emissive += ac * m * 1.2;
+    albedo = mix(albedo, ac*0.4, m*0.6);
+  }
+  if(uKind==9){
+    // leaf, not steel: the generic grey ramp above is thrown away and
+    // rebuilt from t (still the same height field) between a shadowed
+    // leaf-dark and LIVE_G -- the ship's "still running" accent doing
+    // double duty as chlorophyll, which is why no new colour had to be
+    // invented for this. A sparse warm fleck reads as flower or fruit
+    // without being a fourth accent role: it belongs to the kind, not to
+    // uAccent, exactly the way H_hazard's own stripe is not one either.
+    vec3 leafDark = vec3(0.038,0.095,0.034), leafLight = mix(LIVE_G*0.85, vec3(0.55,0.66,0.18), 0.15);
+    vec3 leaf = mix(leafDark, leafLight, t) * ao;
+    // sparse: a bloom here and there, not measles
+    float fleck = smoothstep(0.80, 0.93, vnoise(p*6.0 + uSeed*4.0 + 50.0));
+    vec3 flower = vec3(0.60,0.150,0.170) * mix(0.7,1.0,t);
+    albedo = mix(leaf, flower, fleck*0.40);
+    metal = 0.0;
+    rough = 0.86;
+  }
+
+  oAlbedoRough = vec4(albedo, rough);
+  oNormalMetal = vec4(n*0.5+0.5, metal);
+  oEmissive = vec4(emissive, 1.0);
+}`;
+
+const DISP_VS = `#version 300 es
+in vec3 aPos; in vec3 aNormal; in vec2 aUV;
+uniform mat4 uMVP; uniform mat4 uModel;
+out vec3 vN; out vec2 vUV; out vec3 vWP;
+void main(){
+  vec4 wp = uModel * vec4(aPos,1.0);
+  vWP = wp.xyz;
+  vN = mat3(uModel) * aNormal;
+  vUV = aUV;
+  gl_Position = uMVP * wp;
+}`;
+
+const DISP_FS = `#version 300 es
+precision highp float;
+in vec3 vN; in vec2 vUV; in vec3 vWP;
+uniform sampler2D uAR, uNM, uEM;
+uniform vec3 uLightKeyDir, uLightKeyCol, uLightRakeDir, uLightRakeCol, uCamPos;
+uniform int uViewMode;
+out vec4 oColor;
+void main(){
+  vec4 ar = texture(uAR, vUV);
+  vec4 nm = texture(uNM, vUV);
+  vec4 em = texture(uEM, vUV);
+  vec3 albedo = ar.rgb; float rough = clamp(ar.a,0.04,1.0);
+  vec3 nrmMap = normalize(nm.rgb*2.0-1.0); float metal = nm.a;
+  vec3 N = normalize(vN);
+  vec3 T; if(abs(N.y)>0.999){ T=vec3(1.0,0.0,0.0);} else { T=normalize(vec3(N.z,0.0,-N.x)); }
+  vec3 B = cross(N,T);
+  vec3 worldN = normalize(T*nrmMap.x + B*nrmMap.y + N*nrmMap.z);
+
+  if(uViewMode==1){ oColor=vec4(albedo,1.0); return; }
+  if(uViewMode==2){ oColor=vec4(worldN*0.5+0.5,1.0); return; }
+  if(uViewMode==3){ oColor=vec4(vec3(rough),1.0); return; }
+  if(uViewMode==4){ oColor=vec4(em.rgb,1.0); return; }
+
+  vec3 V = normalize(uCamPos - vWP);
+  vec3 col = vec3(0.0);
+  {
+    vec3 L=normalize(uLightKeyDir); vec3 Hv=normalize(L+V);
+    float df=max(dot(worldN,L),0.0);
+    float sp=pow(max(dot(worldN,Hv),0.0), mix(80.0,12.0,rough)) * mix(1.0,0.25,rough);
+    col += albedo*(0.10+df*0.95)*uLightKeyCol;
+    col += uLightKeyCol*sp*mix(0.35,1.0,metal);
+  }
+  {
+    vec3 L=normalize(uLightRakeDir); vec3 Hv=normalize(L+V);
+    float df=max(dot(worldN,L),0.0);
+    float sp=pow(max(dot(worldN,Hv),0.0), mix(80.0,12.0,rough)) * mix(1.0,0.25,rough);
+    col += albedo*df*0.5*uLightRakeCol;
+    col += uLightRakeCol*sp*0.6*mix(0.35,1.0,metal);
+  }
+  float fr = pow(1.0-max(dot(worldN,V),0.0),3.0);
+  col += vec3(0.15,0.20,0.28)*fr*0.4*(1.0-rough);
+  col += em.rgb;
+  col = pow(col, vec3(0.4545));
+  oColor = vec4(col,1.0);
+}`;
+
+const FLAT_VS = `#version 300 es
+in vec3 aPos; uniform mat4 uMVP; out float vY;
+void main(){ vY=aPos.y; gl_Position = uMVP*vec4(aPos,1.0); }`;
+const FLAT_FS = `#version 300 es
+precision highp float; in float vY; out vec4 oColor;
+void main(){ vec3 c = vec3(0.048,0.054,0.047) + vY*0.008; oColor = vec4(pow(c,vec3(0.4545)),1.0); }`;
+
+function compile(gl, type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + '\n' + src);
+  return s;
+}
+function program(gl, vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+function uniforms(gl, p, names) {
+  const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u;
+}
+
+const bakeProg = program(gl, BAKE_VS, BAKE_FS);
+const bakeU = uniforms(gl, bakeProg, ['uKind', 'uSeed', 'uParams', 'uAccent', 'uWorldW', 'uWorldH', 'uViewport', 'uOrigin', 'uTint', 'uPaint']);
+const dispProg = program(gl, DISP_VS, DISP_FS);
+const dispU = uniforms(gl, dispProg, ['uMVP', 'uModel', 'uAR', 'uNM', 'uEM', 'uLightKeyDir', 'uLightKeyCol',
+  'uLightRakeDir', 'uLightRakeCol', 'uCamPos', 'uViewMode']);
+const flatProg = program(gl, FLAT_VS, FLAT_FS);
+const flatU = uniforms(gl, flatProg, ['uMVP']);
+
+function makeRT(size) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+
+function bakeProp(finalized) {
+  const size = finalized.texSize;
+  const texAR = makeRT(size), texNM = makeRT(size), texEM = makeRT(size);
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texAR, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, texNM, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, texEM, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+  gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(bakeProg);
+  gl.viewport(0, 0, size, size);
+  gl.disable(gl.SCISSOR_TEST);
+  gl.clearColor(0.30, 0.293, 0.283, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.SCISSOR_TEST);
+  for (const r of finalized.regions) {
+    gl.viewport(r.px, r.py, r.pw, r.ph);
+    gl.scissor(r.px, r.py, r.pw, r.ph);
+    gl.uniform1i(bakeU.uKind, r.kind);
+    gl.uniform1f(bakeU.uSeed, r.seed);
+    gl.uniform4f(bakeU.uParams, r.params[0], r.params[1], r.params[2], r.params[3]);
+    gl.uniform1i(bakeU.uAccent, r.accent);
+    gl.uniform1f(bakeU.uWorldW, r.w);
+    gl.uniform1f(bakeU.uWorldH, r.h);
+    gl.uniform2f(bakeU.uViewport, r.pw, r.ph);
+    gl.uniform2f(bakeU.uOrigin, r.px, r.py);
+    const tn = r.tint || [1, 1, 1];
+    gl.uniform3f(bakeU.uTint, tn[0], tn[1], tn[2]);
+    gl.uniform1i(bakeU.uPaint, r.paint ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  gl.disable(gl.SCISSOR_TEST);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.deleteFramebuffer(fbo);
+  return { texAR, texNM, texEM };
+}
+
+function uploadMesh(vertices) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+  const stride = 8 * 4;
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 24);
+  gl.bindVertexArray(null);
+  return { vao, count: vertices.length / 8 };
+}
+
+// ---- build every prop: geometry + baked atlas, once at load -----------
+const LOADED = PROPS.map((_, i) => {
+  // big props get a 2048 atlas: the packer's uniform texels-per-metre
+  // rule means a 2.4 m container at 1024 starves every region on it
+  const f = finalizeProp(i, Math.max(...PROPS[i].size) > 1.5 ? 2048 : 1024);
+  const tex = bakeProp(f);
+  const mesh = uploadMesh(f.vertices);
+  return { name: f.name, room: f.room, sub: f.sub, size: f.size, tex, mesh };
+});
+
+// floor + backdrop, flat-shaded, no texture
+function quadXZ(x0, z0, x1, z1, y) {
+  return new Float32Array([x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z0, x1, y, z1, x0, y, z1]);
+}
+function quadXY(x0, y0, x1, y1, z) {
+  return new Float32Array([x0, y0, z, x1, y0, z, x1, y1, z, x0, y0, z, x1, y1, z, x0, y1, z]);
+}
+function uploadFlat(verts) {
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+  return { vao, count: verts.length / 3 };
+}
+const floorMesh = uploadFlat(quadXZ(-3.2, -3.2, 3.2, 3.2, 0));
+const wallMesh = uploadFlat(quadXY(-3.2, 0, 3.2, 3.4, -1.6));
+
+// ---- matrix helpers (column-major, mirroring the corridor renderer's own math) --
+function mIdent() { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; }
+function mMul(a, b) {
+  const o = new Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k];
+    o[c * 4 + r] = s;
+  }
+  return o;
+}
+function mPersp(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+}
+function mLookAt(eye, target, up) {
+  let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+  let zl = Math.hypot(zx, zy, zz) || 1; zx /= zl; zy /= zl; zz /= zl;
+  let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
+  let xl = Math.hypot(xx, xy, xz) || 1; xx /= xl; xy /= xl; xz /= xl;
+  const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  return [xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0,
+    -(xx * eye[0] + xy * eye[1] + xz * eye[2]), -(yx * eye[0] + yy * eye[1] + yz * eye[2]), -(zx * eye[0] + zy * eye[1] + zz * eye[2]), 1];
+}
+
+// ---- camera + selection state ------------------------------------------
+let current = 0, viewMode = 0;
+let az = 0.7, el = 0.35, dist = 2.2;
+let dragging = false, lastX = 0, lastY = 0;
+
+function selectProp(i) {
+  current = (i + LOADED.length) % LOADED.length;
+  const p = LOADED[current];
+  document.getElementById('pname').textContent = p.name;
+  document.getElementById('psub').textContent = p.sub;
+  document.getElementById('proom').textContent = ROOMS[p.room] || p.room;
+  document.getElementById('stat').textContent = (p.mesh.count) + ' verts';
+  const maxSize = Math.max(...p.size);
+  dist = maxSize * 2.1;
+  document.querySelectorAll('#list .item').forEach(el => el.classList.toggle('on', +el.dataset.i === current));
+}
+
+function buildList() {
+  const el = document.getElementById('list');
+  el.innerHTML = '';
+  for (const room of ROOM_ORDER) {
+    const h = document.createElement('h2'); h.textContent = ROOMS[room]; el.appendChild(h);
+    LOADED.forEach((p, i) => {
+      if (p.room !== room) return;
+      const it = document.createElement('div'); it.className = 'item'; it.dataset.i = i;
+      it.innerHTML = p.name + '<small>' + p.sub + '</small>';
+      it.onclick = () => selectProp(i);
+      el.appendChild(it);
+    });
+  }
+}
+buildList();
+selectProp(0);
+
+document.querySelectorAll('#modes button').forEach(b => b.onclick = () => {
+  viewMode = +b.dataset.m;
+  document.querySelectorAll('#modes button').forEach(x => x.classList.toggle('on', x === b));
+});
+window.addEventListener('keydown', e => {
+  if (e.key >= '1' && e.key <= '9') { const n = +e.key - 1; if (n < LOADED.length) selectProp(n); }
+});
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.classList.add('drag'); });
+window.addEventListener('mouseup', () => { dragging = false; canvas.classList.remove('drag'); });
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  az += (e.clientX - lastX) * 0.008;
+  el = Math.max(-1.35, Math.min(1.35, el + (e.clientY - lastY) * 0.008));
+  lastX = e.clientX; lastY = e.clientY;
+});
+canvas.addEventListener('wheel', e => {
+  dist = Math.max(0.3, Math.min(12, dist * (1 + e.deltaY * 0.001)));
+  e.preventDefault();
+}, { passive: false });
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+function frame() {
+  const p = LOADED[current];
+  const targetY = p.size[1] * 0.5;
+  const eye = [
+    Math.sin(az) * Math.cos(el) * dist,
+    targetY + Math.sin(el) * dist,
+    Math.cos(az) * Math.cos(el) * dist,
+  ];
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.035, 0.033, 0.030, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const proj = mPersp(50 * Math.PI / 180, canvas.width / canvas.height, 0.05, 60);
+  const view = mLookAt(eye, [0, targetY, 0], [0, 1, 0]);
+  const vp = mMul(proj, view);
+
+  gl.useProgram(flatProg);
+  gl.uniformMatrix4fv(flatU.uMVP, false, vp);
+  gl.bindVertexArray(floorMesh.vao); gl.drawArrays(gl.TRIANGLES, 0, floorMesh.count);
+  gl.bindVertexArray(wallMesh.vao); gl.drawArrays(gl.TRIANGLES, 0, wallMesh.count);
+
+  gl.useProgram(dispProg);
+  gl.uniformMatrix4fv(dispU.uMVP, false, vp);
+  gl.uniformMatrix4fv(dispU.uModel, false, mIdent());
+  gl.uniform3f(dispU.uCamPos, eye[0], eye[1], eye[2]);
+  gl.uniform3f(dispU.uLightKeyDir, 0.35, 0.92, 0.25);
+  gl.uniform3f(dispU.uLightKeyCol, 1.02, 1.08, 1.00);   // cool plant-deck white, per the mood ref
+  gl.uniform3f(dispU.uLightRakeDir, Math.sin(az + 1.9), 0.16, Math.cos(az + 1.9));
+  gl.uniform3f(dispU.uLightRakeCol, 0.48, 0.58, 0.78);
+  gl.uniform1i(dispU.uViewMode, viewMode);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, p.tex.texAR); gl.uniform1i(dispU.uAR, 0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, p.tex.texNM); gl.uniform1i(dispU.uNM, 1);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, p.tex.texEM); gl.uniform1i(dispU.uEM, 2);
+  gl.bindVertexArray(p.mesh.vao);
+  gl.drawArrays(gl.TRIANGLES, 0, p.mesh.count);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

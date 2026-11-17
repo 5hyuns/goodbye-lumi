@@ -43,6 +43,7 @@ or Node.
 | `story/` | Dialogue, scenes and encounters as data |
 | `ref/` | The deck plan the whole ship is built from |
 | `archive/` | Documents from the contest period. Kept as a record and not maintained |
+| `making/` | The prototypes each piece started from: deck plan revisions, LUMI's viewer v1-v5, an early prop bench, the weapon bench, two concept sheets. Not used by the build; see `making/README.md` |
 
 ## docs/
 

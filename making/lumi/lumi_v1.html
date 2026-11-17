@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>루미 — 캐릭터 뷰어</title>
+<style>
+  :root {
+    --void:   #0a0c0e;
+    --steel:  #14181c;
+    --edge:   #232a30;
+    --dim:    #6d7780;
+    --read:   #b9c2c9;
+    --lens:   #e8a33d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--void);
+    color: var(--read);
+    font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 20px 40px; }
+  h1 {
+    font-size: 17px; font-weight: 500; margin: 0 0 2px;
+    color: #e6ebef; letter-spacing: -0.01em;
+  }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 18px; }
+  #stage {
+    position: relative;
+    height: 460px;
+    border: 1px solid var(--edge);
+    border-radius: 3px;
+    overflow: hidden;
+    background: #070809;
+    cursor: grab;
+  }
+  #stage.dragging { cursor: grabbing; }
+  #stage canvas { display: block; }
+  .hint {
+    position: absolute; left: 12px; bottom: 10px;
+    color: #45505a; font-size: 12px; pointer-events: none;
+  }
+
+  .rail { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  button {
+    font: inherit; font-size: 13px;
+    color: var(--read);
+    background: var(--steel);
+    border: 1px solid var(--edge);
+    border-radius: 2px;
+    padding: 7px 13px;
+    cursor: pointer;
+    transition: border-color .12s, color .12s;
+  }
+  button:hover { border-color: #3a444d; color: #e6ebef; }
+  button:focus-visible { outline: 2px solid var(--lens); outline-offset: 1px; }
+  button[aria-pressed="true"] {
+    border-color: var(--lens);
+    color: var(--lens);
+  }
+  .rail.secondary { margin-top: 8px; }
+  .rail.secondary button { color: var(--dim); }
+  .rail.secondary button:hover { color: var(--read); }
+
+  .readout {
+    margin-top: 16px;
+    border-top: 1px solid var(--edge);
+    padding-top: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 4px 20px;
+  }
+  .readout div { display: flex; justify-content: space-between; gap: 10px; }
+  .readout span:first-child { color: var(--dim); }
+  .readout span:last-child { font-variant-numeric: tabular-nums; }
+
+  .note {
+    margin-top: 20px; padding-top: 14px;
+    border-top: 1px solid var(--edge);
+    color: var(--dim); font-size: 13px; max-width: 62ch;
+  }
+  .note b { color: var(--read); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>루미 — 캐릭터 뷰어</h1>
+  <p class="sub">lumi.c의 메시 생성과 상태기를 그대로 옮긴 미리보기. 에셋 파일 없이 전부 코드로 만든다.</p>
+
+  <div id="stage">
+    <p class="hint">드래그로 회전, 휠로 거리 조절</p>
+  </div>
+
+  <div class="rail" id="states"></div>
+  <div class="rail secondary">
+    <button id="silence">0.5초 침묵 넣기</button>
+    <button id="spin" aria-pressed="true">천천히 자동 회전</button>
+    <button id="wire" aria-pressed="false">와이어프레임</button>
+  </div>
+
+  <div class="readout">
+    <div><span>정점</span><span id="r-verts">—</span></div>
+    <div><span>삼각형</span><span id="r-tris">—</span></div>
+    <div><span>링 각속도</span><span id="r-ring">—</span></div>
+    <div><span>콘 반각</span><span id="r-cone">—</span></div>
+    <div><span>롤</span><span id="r-roll">—</span></div>
+    <div><span>LED</span><span id="r-led">—</span></div>
+  </div>
+
+  <p class="note">
+    도킹은 이동과 완전히 같은 파라미터를 씁니다 — 버튼을 번갈아 눌러도 움직임이 달라지지 않아야 정상입니다.
+    <b>정지</b>는 S10의 라이트 소실이며, 페이드가 아니라 컷오프입니다.
+  </p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* ================= 형상 파라미터 — lumi.c와 동일 ================= */
+  var BODY_R = 0.200, BODY_H = 0.260, BODY_TAPER = 0.150;
+  var FACE_Z = 0.150, FACE_H = 0.115;
+  var LENS_R = 0.075, LENS_Y = 0.045;
+  var RING_MAJOR = 0.300, RING_MINOR = 0.012, RING_Y = -0.020;
+  var BODY_SEG = 24, BODY_RINGS = 16, RING_SEG = 32, RING_TUBE = 6, LENS_SEG = 16;
+
+  /* ================= 절차적 메시 ================= */
+  function Buf() { this.pos = []; this.idx = []; this.groups = []; }
+  Buf.prototype.v = function (x, y, z) {
+    this.pos.push(x, y, z);
+    return this.pos.length / 3 - 1;
+  };
+  Buf.prototype.quad = function (a, b, c, d) {
+    this.idx.push(a, b, c, a, c, d);
+  };
+  Buf.prototype.mark = function (name) {
+    this.groups.push({ name: name, start: this.idx.length });
+  };
+  Buf.prototype.close = function () {
+    for (var i = 0; i < this.groups.length; i++) {
+      var g = this.groups[i];
+      var end = (i + 1 < this.groups.length) ? this.groups[i + 1].start : this.idx.length;
+      g.count = end - g.start;
+    }
+  };
+
+  function buildBody(b) {
+    var base = b.pos.length / 3;
+    for (var j = 0; j <= BODY_RINGS; j++) {
+      var a = Math.PI * j / BODY_RINGS;
+      var r = Math.sin(a) * (1 - BODY_TAPER * Math.cos(a)) * BODY_R;
+      var y = Math.cos(a) * BODY_H;
+      for (var i = 0; i <= BODY_SEG; i++) {
+        var t = 2 * Math.PI * i / BODY_SEG;
+        var x = r * Math.cos(t), z = r * Math.sin(t);
+        if (z > FACE_Z && Math.abs(y) < FACE_H) z = FACE_Z;
+        b.v(x, y, z);
+      }
+    }
+    var row = BODY_SEG + 1;
+    for (var jj = 0; jj < BODY_RINGS; jj++)
+      for (var ii = 0; ii < BODY_SEG; ii++) {
+        var v0 = base + jj * row + ii;
+        b.quad(v0, v0 + row, v0 + row + 1, v0 + 1);
+      }
+  }
+
+  function buildLens(b) {
+    var z = FACE_Z + 0.002;
+    var c = b.v(0, LENS_Y, z);
+    var first = b.pos.length / 3;
+    for (var i = 0; i < LENS_SEG; i++) {
+      var t = 2 * Math.PI * i / LENS_SEG;
+      b.v(Math.cos(t) * LENS_R, LENS_Y + Math.sin(t) * LENS_R, z);
+    }
+    for (var k = 0; k < LENS_SEG; k++)
+      b.idx.push(c, first + k, first + (k + 1) % LENS_SEG);
+  }
+
+  function buildLeds(b) {
+    var xs = [-0.045, 0, 0.045], y = -0.075, hw = 0.009, hh = 0.005, z = FACE_Z + 0.002;
+    for (var k = 0; k < 3; k++) {
+      var a = b.v(xs[k] - hw, y - hh, z);
+      var c = b.v(xs[k] + hw, y - hh, z);
+      var d = b.v(xs[k] + hw, y + hh, z);
+      var e = b.v(xs[k] - hw, y + hh, z);
+      b.quad(a, c, d, e);
+    }
+  }
+
+  function buildRing(b) {
+    var base = b.pos.length / 3;
+    for (var i = 0; i <= RING_SEG; i++) {
+      var u = 2 * Math.PI * i / RING_SEG;
+      for (var j = 0; j <= RING_TUBE; j++) {
+        var w = 2 * Math.PI * j / RING_TUBE;
+        var rr = RING_MAJOR + RING_MINOR * Math.cos(w);
+        b.v(rr * Math.cos(u), RING_Y + RING_MINOR * Math.sin(w), rr * Math.sin(u));
+      }
+    }
+    var row = RING_TUBE + 1;
+    for (var ii = 0; ii < RING_SEG; ii++)
+      for (var jj = 0; jj < RING_TUBE; jj++) {
+        var v0 = base + ii * row + jj;
+        b.quad(v0, v0 + row, v0 + row + 1, v0 + 1);
+      }
+  }
+
+  function toGeometry(b) {
+    var g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(b.pos, 3));
+    g.setIndex(b.idx);
+    g.computeVertexNormals();
+    return g;
+  }
+
+  /* 본체(셸 + 렌즈 + LED)는 한 지오메트리, 링은 따로 — 링은 본체를 따라 기울지 않는다 */
+  var bodyBuf = new Buf();
+  bodyBuf.mark("shell"); buildBody(bodyBuf);
+  bodyBuf.mark("lens");  buildLens(bodyBuf);
+  bodyBuf.mark("led");   buildLeds(bodyBuf);
+  bodyBuf.close();
+
+  var ringBuf = new Buf();
+  ringBuf.mark("ring"); buildRing(ringBuf); ringBuf.close();
+
+  var bodyGeo = toGeometry(bodyBuf);
+  bodyBuf.groups.forEach(function (g, i) { bodyGeo.addGroup(g.start, g.count, i); });
+  var ringGeo = toGeometry(ringBuf);
+
+  var totalVerts = bodyBuf.pos.length / 3 + ringBuf.pos.length / 3;
+  var totalTris = (bodyBuf.idx.length + ringBuf.idx.length) / 3;
+
+  /* ================= 씬 ================= */
+  var stage = document.getElementById("stage");
+  var W = stage.clientWidth, H = stage.clientHeight;
+
+  var renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(W, H);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  stage.appendChild(renderer.domElement);
+
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070809);
+  scene.fog = new THREE.Fog(0x070809, 3.0, 9.0);
+
+  var camera = new THREE.PerspectiveCamera(38, W / H, 0.05, 60);
+
+  var shellMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.52, metalness: 0.42 });
+  var lensMat  = new THREE.MeshBasicMaterial({ color: 0xffc978 });
+  var ledMat   = new THREE.MeshBasicMaterial({ color: 0xe8a33d });
+  var ringMat  = new THREE.MeshStandardMaterial({ color: 0x59c8a4, roughness: 0.3, metalness: 0.6,
+                                                  emissive: 0x0e3b30, emissiveIntensity: 1 });
+
+  var body = new THREE.Mesh(bodyGeo, [shellMat, lensMat, ledMat]);
+  body.castShadow = true;
+  var ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.castShadow = true;
+
+  var rig = new THREE.Group();      /* 위치 + 호버만 담당 */
+  rig.add(body); rig.add(ring);     /* body만 회전, ring은 월드 수평 유지 */
+  scene.add(rig);
+
+  var floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(24, 24),
+    new THREE.MeshStandardMaterial({ color: 0x171a1d, roughness: 0.95, metalness: 0.05 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -1.15;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  scene.add(new THREE.AmbientLight(0x2a3238, 0.55));
+  var fill = new THREE.DirectionalLight(0x4a5a66, 0.35);
+  fill.position.set(-2, 3, -2);
+  scene.add(fill);
+
+  var spot = new THREE.SpotLight(0xffe6bd, 2.4, 14, 0.73, 0.42, 1.4);
+  spot.castShadow = true;
+  spot.shadow.mapSize.set(1024, 1024);
+  var spotTarget = new THREE.Object3D();
+  scene.add(spot); scene.add(spotTarget);
+  spot.target = spotTarget;
+
+  var beam = new THREE.Mesh(
+    new THREE.ConeGeometry(1, 1, 28, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.045,
+                                  side: THREE.DoubleSide, depthWrite: false })
+  );
+  scene.add(beam);
+
+  /* ================= 상태기 — lumi.c의 LUMI_PROFILE ================= */
+  var STATES = [
+    { key: "IDLE", label: "대기",  ring: 0.6, cone: 42, light: 1.0, move: 0 },
+    { key: "SCAN", label: "스캔",  ring: 4.0, cone: 14, light: 1.0, move: 0 },
+    { key: "MOVE", label: "이동",  ring: 1.2, cone: 38, light: 1.0, move: 1.35 },
+    { key: "TALK", label: "대사",  ring: 0.9, cone: 42, light: 1.0, move: 0 },
+    { key: "DOCK", label: "도킹",  ring: 1.2, cone: 38, light: 1.0, move: 1.35 },
+    { key: "DEAD", label: "정지",  ring: 0.0, cone: 0,  light: 0.0, move: 0 }
+  ];
+
+  var L = {
+    pos: new THREE.Vector3(0, 0, 0),
+    vel: new THREE.Vector3(),
+    target: new THREE.Vector3(0, 0, 0),
+    yaw: 0, pitch: 0, roll: 0, yawV: 0, pitchV: 0,
+    bobT: 0, ringAngle: 0, ringSpeed: 0.6,
+    cone: 42, light: 1, led: 0.25, hold: 0, ledPhase: 0,
+    state: 0
+  };
+
+  function wrapPi(a) {
+    while (a >  Math.PI) a -= 2 * Math.PI;
+    while (a < -Math.PI) a += 2 * Math.PI;
+    return a;
+  }
+  function smoothDamp(cur, goal, velRef, key, smooth, dt) {
+    var omega = 2 / Math.max(smooth, 1e-4);
+    var x = omega * dt;
+    var ex = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+    var change = wrapPi(cur - goal);
+    var temp = (velRef[key] + omega * change) * dt;
+    velRef[key] = (velRef[key] - omega * temp) * ex;
+    return goal + (change + temp) * ex;
+  }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x); }
+
+  var wanderT = 0;
+  var lookAt = new THREE.Vector3();
+
+  function update(dt) {
+    var p = STATES[L.state];
+
+    /* 이동 상태에서는 목표점이 천천히 떠돈다 — 뱅킹을 보려면 옆으로 움직여야 한다 */
+    if (p.move > 0) {
+      wanderT += dt;
+      L.target.set(Math.sin(wanderT * 0.55) * 0.85, Math.sin(wanderT * 0.31) * 0.18, Math.cos(wanderT * 0.42) * 0.55);
+      ["x", "y", "z"].forEach(function (ax) {
+        L.vel[ax] += (L.target[ax] - L.pos[ax]) * 6.0 * dt;
+        L.vel[ax] *= Math.pow(0.06, dt);
+        L.vel[ax] = clamp(L.vel[ax], -p.move, p.move);
+        L.pos[ax] += L.vel[ax] * dt;
+      });
+    } else {
+      ["x", "y", "z"].forEach(function (ax) { L.vel[ax] *= Math.pow(0.02, dt); });
+      L.pos.lerp(new THREE.Vector3(0, 0, 0), 1 - Math.pow(0.15, dt));
+    }
+
+    L.bobT += dt;
+    var bob = 0.030 * Math.sin(L.bobT * 2.62) + 0.008 * Math.sin(L.bobT * 3.70);
+
+    /* 시선: 카메라를 본다 (게임에서는 플레이어) */
+    lookAt.copy(camera.position);
+    var dx = lookAt.x - L.pos.x, dy = lookAt.y - (L.pos.y + bob), dz = lookAt.z - L.pos.z;
+    var gy = Math.atan2(dx, dz);
+    var gp = -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
+    L.yaw   = smoothDamp(L.yaw,   gy, L, "yawV",   0.18, dt);
+    L.pitch = smoothDamp(L.pitch, gp, L, "pitchV", 0.22, dt);
+
+    var rightV = L.vel.x * Math.cos(L.yaw) - L.vel.z * Math.sin(L.yaw);
+    L.roll = lerp(L.roll, clamp(-rightV * 0.28, -0.30, 0.30), 1 - Math.pow(0.001, dt));
+
+    if (L.hold > 0) {
+      L.hold -= dt;
+      L.ringSpeed = lerp(L.ringSpeed, 0, 1 - Math.pow(1e-6, dt));
+    } else {
+      L.ringSpeed = lerp(L.ringSpeed, p.ring, 1 - Math.pow(0.02, dt));
+    }
+    L.ringAngle += L.ringSpeed * dt;
+
+    if (p.key === "DEAD") { L.light = 0; L.cone = 0; }
+    else {
+      L.cone  = lerp(L.cone,  p.cone,  1 - Math.pow(0.002, dt));
+      L.light = lerp(L.light, p.light, 1 - Math.pow(0.002, dt));
+    }
+
+    L.ledPhase += dt;
+    if (p.key === "TALK")      L.led = 0.55 + 0.45 * Math.sin(L.ledPhase * 17);
+    else if (p.key === "DEAD") L.led = (L.ledPhase % 1) < 0.12 ? 1 : 0;
+    else                       L.led = 0.25 + 0.10 * Math.sin(L.ledPhase * 1.4);
+
+    /* --- 적용 --- */
+    rig.position.set(L.pos.x, L.pos.y + bob, L.pos.z);
+    body.rotation.set(L.pitch, L.yaw, L.roll, "YXZ");
+    ring.rotation.set(0, L.ringAngle, 0);
+
+    lensMat.color.setRGB(1.0 * L.light, 0.79 * L.light, 0.47 * L.light);
+    ledMat.color.setRGB(0.91 * L.led, 0.64 * L.led, 0.24 * L.led);
+
+    var fwd = new THREE.Vector3(0, 0, 1).applyEuler(body.rotation);
+    var lensPos = new THREE.Vector3(0, LENS_Y, 0).applyEuler(body.rotation).add(rig.position);
+    spot.position.copy(lensPos);
+    spotTarget.position.copy(lensPos).addScaledVector(fwd, 6);
+    spot.angle = Math.max(THREE.MathUtils.degToRad(L.cone), 0.001);
+    spot.intensity = 2.4 * L.light;
+
+    var reach = 5.0;
+    beam.visible = L.light > 0.02;
+    if (beam.visible) {
+      var r = Math.tan(spot.angle) * reach;
+      beam.scale.set(r, reach, r);
+      beam.position.copy(lensPos).addScaledVector(fwd, reach / 2);
+      beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), fwd);
+      beam.material.opacity = 0.05 * L.light;
+    }
+  }
+
+  /* ================= 카메라 궤도 ================= */
+  var orbit = { theta: 0.55, phi: 1.42, dist: 1.9, auto: true };
+  function placeCamera() {
+    camera.position.set(
+      orbit.dist * Math.sin(orbit.phi) * Math.sin(orbit.theta),
+      orbit.dist * Math.cos(orbit.phi),
+      orbit.dist * Math.sin(orbit.phi) * Math.cos(orbit.theta)
+    );
+    camera.lookAt(0, 0, 0);
+  }
+
+  var dragging = false, lastX = 0, lastY = 0;
+  stage.addEventListener("pointerdown", function (e) {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    stage.classList.add("dragging");
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener("pointermove", function (e) {
+    if (!dragging) return;
+    orbit.theta -= (e.clientX - lastX) * 0.008;
+    orbit.phi = clamp(orbit.phi - (e.clientY - lastY) * 0.008, 0.35, 2.6);
+    lastX = e.clientX; lastY = e.clientY;
+  });
+  stage.addEventListener("pointerup", function (e) {
+    dragging = false; stage.classList.remove("dragging");
+    stage.releasePointerCapture(e.pointerId);
+  });
+  stage.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    orbit.dist = clamp(orbit.dist + e.deltaY * 0.0016, 0.8, 5.5);
+  }, { passive: false });
+
+  /* ================= UI ================= */
+  var railEl = document.getElementById("states");
+  var stateBtns = STATES.map(function (s, i) {
+    var b = document.createElement("button");
+    b.textContent = s.label;
+    b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+    b.addEventListener("click", function () {
+      L.state = i;
+      stateBtns.forEach(function (o, k) { o.setAttribute("aria-pressed", k === i ? "true" : "false"); });
+    });
+    railEl.appendChild(b);
+    return b;
+  });
+
+  document.getElementById("silence").addEventListener("click", function () { L.hold = 0.5; });
+
+  var spinBtn = document.getElementById("spin");
+  spinBtn.addEventListener("click", function () {
+    orbit.auto = !orbit.auto;
+    spinBtn.setAttribute("aria-pressed", orbit.auto ? "true" : "false");
+  });
+
+  var wireBtn = document.getElementById("wire");
+  wireBtn.addEventListener("click", function () {
+    var on = wireBtn.getAttribute("aria-pressed") !== "true";
+    wireBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    shellMat.wireframe = on; ringMat.wireframe = on;
+  });
+
+  var rv = document.getElementById("r-verts"), rt = document.getElementById("r-tris"),
+      rr = document.getElementById("r-ring"), rc = document.getElementById("r-cone"),
+      rl = document.getElementById("r-roll"), rd = document.getElementById("r-led");
+  rv.textContent = totalVerts.toLocaleString();
+  rt.textContent = totalTris.toLocaleString();
+
+  window.addEventListener("resize", function () {
+    W = stage.clientWidth; H = stage.clientHeight;
+    camera.aspect = W / H; camera.updateProjectionMatrix();
+    renderer.setSize(W, H);
+  });
+
+  var prev = performance.now(), acc = 0;
+  function frame(now) {
+    var dt = Math.min((now - prev) / 1000, 0.05);
+    prev = now;
+    if (orbit.auto && !dragging) orbit.theta += dt * 0.18;
+    placeCamera();
+    update(dt);
+
+    acc += dt;
+    if (acc > 0.12) {
+      acc = 0;
+      rr.textContent = L.ringSpeed.toFixed(2) + " rad/s";
+      rc.textContent = L.cone.toFixed(1) + "°";
+      rl.textContent = (L.roll * 57.2958).toFixed(1) + "°";
+      rd.textContent = L.led.toFixed(2);
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  placeCamera();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
