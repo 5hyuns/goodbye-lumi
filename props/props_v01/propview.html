@@ -1,0 +1,1137 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Prop Bench — Derelict</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0908;color:#cfcac2;font:13px/1.4 -apple-system,Segoe UI,sans-serif;overflow:hidden}
+  #gl{position:absolute;inset:0;display:block;cursor:grab}
+  #gl.drag{cursor:grabbing}
+  #banner{position:absolute;top:0;left:0;right:0;background:#5a1f14;color:#ffd9c9;padding:8px 14px;font-size:12px;display:none;z-index:20}
+  #hud{position:absolute;left:14px;top:14px;max-width:280px;pointer-events:none}
+  #hud h1{font-size:16px;margin:0 0 2px;font-weight:600;color:#e8e2d6;letter-spacing:.02em}
+  #hud .sub{font-size:12px;color:#8f8a80}
+  #hud .room{display:inline-block;margin-top:6px;padding:2px 7px;border:1px solid #4a443a;border-radius:3px;font-size:11px;color:#c9a15a}
+  #list{position:absolute;right:0;top:0;bottom:0;width:220px;background:#111009cc;border-left:1px solid #2a2620;overflow-y:auto;padding:10px 0}
+  #list h2{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#7a7568;margin:14px 14px 4px;border-top:1px solid #2a2620;padding-top:10px}
+  #list h2:first-child{border-top:none;margin-top:0}
+  .item{padding:6px 14px;cursor:pointer;color:#ada894;border-left:2px solid transparent}
+  .item:hover{background:#1c1912;color:#e8e2d6}
+  .item.on{background:#241f14;color:#f2ce8f;border-left-color:#c9a15a}
+  .item small{display:block;color:#726d61;font-size:10px}
+  #modes{position:absolute;left:14px;bottom:14px;display:flex;gap:4px}
+  #modes button{background:#161310;border:1px solid #332e24;color:#a9a494;padding:6px 10px;font-size:11px;cursor:pointer;border-radius:3px}
+  #modes button.on{background:#3a2f18;color:#f2ce8f;border-color:#6b5730}
+  #keys{position:absolute;left:14px;bottom:52px;font-size:11px;color:#6f6a5e}
+  #stat{position:absolute;right:230px;top:14px;font-size:11px;color:#6f6a5e;text-align:right}
+</style>
+</head>
+<body>
+<div id="banner">file:// blocks module/texture loading in Chrome — serve this folder over HTTP, e.g. <code>python -m http.server</code> in <code>props/</code>, then open http://localhost:8000/propview.html</div>
+<canvas id="gl"></canvas>
+<div id="hud">
+  <h1 id="pname">—</h1>
+  <div class="sub" id="psub">—</div>
+  <span class="room" id="proom">—</span>
+</div>
+<div id="stat"></div>
+<div id="list"></div>
+<div id="modes">
+  <button data-m="0" class="on">Lit</button>
+  <button data-m="1">Albedo</button>
+  <button data-m="2">Normal</button>
+  <button data-m="3">Rough</button>
+  <button data-m="4">Emissive</button>
+  <button data-m="5">AO</button>
+  <button data-m="6">Metal</button>
+</div>
+<div id="keys">drag: orbit &middot; wheel: zoom &middot; arrows / n p: next prop &middot; L: pause key light &middot; [ ]: light height &middot; K: look <b id="look">DERELICT</b></div>
+
+<script src="propkit.js"></script>
+<script>
+// loader guard: a missing/misnamed/unparsable propkit.js otherwise
+// surfaces as an opaque "PROPS is not defined" much further down.
+// Reports WHY without touching the DOM the viewer needs.
+window.__PROPKIT_OK = true;
+try { PROPS; } catch (e) {
+  window.__PROPKIT_OK = false;
+  const box = document.createElement('pre');
+  box.style.cssText = 'position:fixed;inset:0;z-index:99;margin:0;padding:2em;background:#111;color:#f77;font:13px/1.5 monospace;white-space:pre-wrap;overflow:auto';
+  box.textContent = 'propkit.js가 실행되지 않았습니다. 진단 중...';
+  document.body.appendChild(box);
+  const say = t => { box.textContent = t; };
+  let url = null;
+  try { url = new URL('propkit.js', location.href).href; } catch (e2) { url = null; }
+  if (url === null) {
+    // location.href is not a usable base (about:srcdoc, a sandboxed
+    // iframe). A relative <script src> cannot resolve
+    // here either, which is why propkit.js never loaded.
+    say('이 페이지는 상대 경로 스크립트를 불러올 수 없는 환경에서 실행되고 있습니다.\n' +
+        '(location.href = ' + String(location.href) + ')\n\n' +
+        '두 파일을 같은 폴더에 두고\n' +
+        '로컬 서버로 여세요:\n\n  python3 -m http.server 8000\n  → http://localhost:8000/propview.html');
+  } else if (location.protocol === 'file:') {
+    say('propkit.js가 실행되지 않았습니다.\n\nfile:// 로 열려 있어 원인을 자동 진단할 수 없습니다.\n' +
+        'propview.html이 있는 폴더에서 다음을 실행하고 http://localhost:8000/propview.html 로 여세요:\n\n' +
+        '  python3 -m http.server 8000\n\n기대 경로: ' + url);
+  } else {
+    fetch(url).then(r => r.text().then(t => {
+      const head = t.slice(0, 200).replace(/\s+/g, ' ');
+      if (!r.ok) {
+        say('propkit.js를 서버가 찾지 못했습니다 (HTTP ' + r.status + ').\n\n요청한 URL: ' + url +
+            '\n\npropview.html과 같은 폴더에 정확히 propkit.js 라는 이름으로 두세요.');
+      } else if (/^\s*</.test(t)) {
+        say('propkit.js 자리에 HTML이 돌아왔습니다 (서버의 404 페이지일 가능성).\n\nURL: ' + url + '\n\n첫 200자:\n' + head);
+      } else {
+        // the file arrived intact, so it must have thrown while parsing
+        // or running -- re-run it here to surface the real error
+        let real = null;
+        try { (0, eval)(t); } catch (e2) { real = e2; }
+        say('propkit.js는 정상적으로 받았지만 (' + t.length + ' bytes) 실행 중 오류가 났습니다.\n\n' +
+            (real ? (real.name + ': ' + real.message + '\n\n' + (real.stack || '')) : '재실행 시에는 오류가 재현되지 않았습니다. 브라우저 캐시를 지우고(Ctrl+Shift+R) 다시 시도해 보세요.') +
+            '\n\n첫 200자:\n' + head);
+      }
+    })).catch(err => say('propkit.js 요청 자체가 실패했습니다.\n\nURL: ' + url + '\n' + err));
+  }
+}
+</script>
+<script>
+if (window.__PROPKIT_OK) {
+if (location.protocol === 'file:') document.getElementById('banner').style.display = 'block';
+
+const OCHRE = [0.560, 0.330, 0.062], AMBER = [1.00, 0.520, 0.130],
+      LIVE_C = [0.180, 0.580, 0.780], LIVE_G = [0.200, 0.720, 0.280];
+const ROOMS = { quarters: '승무원 숙소 · Crew Quarters', lobby: '로비 · Lobby', mess: '식당 · Mess Hall',
+                medbay: '의무실 · Medbay', storage: '창고 · Storage', cargo: '화물칸 · Cargo Bay',
+                engine: '기관실 · Engine Room',
+                corridor: '통로 · Corridor', lounge: '관측 라운지 · Observation Lounge',
+                gallery: '탈출 갤러리 · Escape Gallery' };
+const ROOM_ORDER = ['quarters', 'lobby', 'lounge', 'corridor', 'mess', 'medbay', 'storage',
+                    'cargo', 'engine', 'gallery'];
+
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { antialias: true });
+if (!gl) { document.getElementById('banner').textContent = 'WebGL2 is not available in this browser.'; document.getElementById('banner').style.display = 'block'; throw new Error('no webgl2'); }
+gl.getExtension('EXT_color_buffer_float');
+
+// ---- shared height-field library + pattern kinds. One bake pass per region: height is re-evaluated at
+// four neighbouring points to get the gradient directly,
+// no separate normal-from-texture pass needed.
+const LIB_GLSL = `
+#define PI 3.14159265
+float wx(float x){ return x - floor(x + 0.5); }
+float triw(float x){ return abs(fract(x) - 0.5) * 2.0; }
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.545); }
+float vnoise(vec2 p){   // bilinear value noise -- h21 alone aliases into hard-edged static
+  vec2 i=floor(p), f=fract(p);
+  float a=h21(i), b=h21(i+vec2(1.0,0.0)), c=h21(i+vec2(0.0,1.0)), d=h21(i+vec2(1.0,1.0));
+  vec2 u=f*f*(3.0-2.0*f);
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+float sdB(vec2 p, vec2 b){ vec2 d = abs(p) - b; return length(max(d,0.0)) + min(max(d.x,d.y),0.0); }
+float sdR(vec2 p, vec2 b, float r){ return sdB(p, b - vec2(r)) - r; }
+float sdA(vec2 p, float r, float w){ return abs(length(p) - r) - w; }
+float cham(float d, float w){ return clamp(-d/w, 0.0, 1.0); }
+float rndp(float d, float r){ float t = clamp(-d/r,0.0,1.0); return sqrt(t*(2.0-t)); }
+float domep(vec2 p, float r){ float l = min(length(p)/r, 1.0); return sqrt(1.0 - l*l); }
+float boltp(vec2 p, float r){ return domep(p, r) * 0.85 - cham(sdA(p, r*1.55, r*0.18), r*0.22) * 0.30; }
+
+/* gMat: a MATERIAL ID written by the height functions alongside the
+   height. Until now the bake knew a bolt only as a bump, so it painted
+   the bolt in exactly the same paint as the plate it holds down -- and
+   a fastener is a different part, in a different alloy, whose paint the
+   wrench broke the first time anyone touched it. The height functions
+   are the only place that knows what a feature IS, so they say so.
+     0 plate   1 fastener   2 keycap   3 gasket/seal   4 machined trim
+   Read once at the texel centre; the supersampled height taps overwrite
+   it harmlessly. */
+float gMat;
+void mat(float m, float inside){ gMat = mix(gMat, m, step(0.5, inside)); }
+
+float H_panel(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h = 0.30;
+  float mgn = min(0.030, min(hx,hy)*0.30);
+  vec2 b = vec2(hx-mgn, hy-mgn);
+  // tight corner radius + shallower step: machined plate, not moulded pillow
+  h += cham(sdR(p, b, min(0.012,mgn)), 0.018) * 0.22;
+  h -= cham(sdR(p, b*0.86, min(0.010,mgn*0.7)), 0.010) * 0.10;
+  h -= cham(sdB(p, b*0.80), 0.006) * 0.07;
+  if(pr.x>0.5){
+    float br = min(0.024, min(hx,hy)*0.10);
+    vec2 cc = b - vec2(br*1.8);
+    h += boltp(p - vec2(-cc.x,-cc.y), br) * 0.26;
+    h += boltp(p - vec2( cc.x,-cc.y), br) * 0.26;
+    h += boltp(p - vec2(-cc.x, cc.y), br) * 0.26;
+    h += boltp(p - vec2( cc.x, cc.y), br) * 0.26;
+    float nearBolt = min(min(length(p-vec2(-cc.x,-cc.y)), length(p-vec2(cc.x,-cc.y))),
+                         min(length(p-vec2(-cc.x, cc.y)), length(p-vec2(cc.x, cc.y))));
+    // band first, fasteners second: the bolts sit inside the raised
+    // margin, so tagging the band last would erase every one of them
+    mat(4.0, step(0.5, cham(sdR(p, b, min(0.012,mgn)), 0.018)) * (1.0 - step(0.5, cham(sdR(p, b*0.86, min(0.010,mgn*0.7)), 0.010))));
+    mat(1.0, step(nearBolt, br*1.15));
+    return h;
+  }
+  mat(4.0, step(0.5, cham(sdR(p, b, min(0.012,mgn)), 0.018)) * (1.0 - step(0.5, cham(sdR(p, b*0.86, min(0.010,mgn*0.7)), 0.010))));
+  return h;
+}
+float H_rib(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h = 0.20;
+  float count = max(2.0, pr.x);
+  float pitch = ww/count;
+  float rx = mod(p.x + hx + pitch*0.5, pitch) - pitch*0.5;
+  h += domep(vec2(rx,0.0), pitch*0.30) * 0.42 * step(abs(p.y), hy-0.02);
+  h -= cham(sdB(p, vec2(hx-0.010, hy-0.010)), 0.010) * 0.14;
+  h += cham(sdB(vec2(0.,p.y-hy+0.05), vec2(hx-0.006,0.05)), 0.012) * 0.20;
+  h += cham(sdB(vec2(0.,p.y+hy-0.05), vec2(hx-0.006,0.05)), 0.012) * 0.20;
+  return h;
+}
+float H_screen(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h = 0.32;
+  vec2 b = vec2(max(0.01,hx-0.024), max(0.01,hy-0.024));
+  h += cham(sdR(p,b,min(0.016,min(b.x,b.y)*0.5)), 0.014)*0.30;
+  vec2 sb = max(vec2(0.006), b - vec2(0.020));
+  h -= cham(sdR(p, sb, min(0.006,min(sb.x,sb.y)*0.4)), 0.010) * 0.26;
+  mat(4.0, step(0.5, cham(sdR(p,b,min(0.016,min(b.x,b.y)*0.5)), 0.014))
+         * (1.0 - step(0.5, cham(sdR(p, sb, min(0.006,min(sb.x,sb.y)*0.4)), 0.010))));
+  return h;
+}
+float H_buttons(vec2 p, float ww, float wh, float seed){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.28;
+  h += cham(sdR(p, vec2(max(0.01,hx-0.018),max(0.01,hy-0.018)), 0.010), 0.010)*0.20;
+  vec2 area = vec2(max(0.05,ww-0.050), max(0.05,wh-0.050));
+  float cx = area.x/5.0, cy = area.y/3.0;
+  float px_ = mod(p.x + area.x*0.5, cx) - cx*0.5;
+  float py_ = mod(p.y + area.y*0.5, cy) - cy*0.5;
+  float inField = step(abs(p.x), area.x*0.5) * step(abs(p.y), area.y*0.5);
+  h -= cham(sdR(vec2(px_,py_), vec2(cx*0.36, cy*0.30), 0.006), 0.007) * 0.22 * inField;
+  mat(2.0, step(0.5, cham(sdR(vec2(px_,py_), vec2(cx*0.36, cy*0.30), 0.006), 0.007)) * inField);
+  return h;
+}
+/* hazardPhase -- the stripe field, shared by the height pass and the
+   colour pass so they cannot drift apart.
+
+   Two things were wrong with the old triw(p.x*2.2 + p.y*6.0):
+
+   1. The frequency was fixed in world space and had nothing to do with
+      the region's width, so a band wrapped around a drum -- sixteen
+      identical facets, all sampling ONE shared region -- restarted
+      mid-stripe at every seam. Sixteen fragments of a diagonal, each
+      cut off and begun again, is the zigzag. Quantising to a whole
+      number of periods across the region's width makes the phase at a
+      facet's right edge identical to the phase at the next facet's
+      left edge, so the stripes run straight through the seam and close
+      around the drum.
+   2. The gradient was 2.2 in x against 6.0 in y, so the stripes ran
+      nearly HORIZONTAL. A hazard stripe is 45 degrees.
+
+   pr.x is the stripe pitch in metres. It was being passed by every
+   caller (0.07, 0.10, 0.16) and ignored. */
+float hazardPhase(vec2 p, float ww, float wh, vec4 pr){
+  float per = pr.x > 0.001 ? pr.x : 0.10;
+  float nx = max(1.0, floor(ww/per + 0.5));
+  float f = nx/max(ww, 0.001);
+  return triw(p.x*f + p.y*f);
+}
+float hazardFreq(float ww, vec4 pr){
+  float per = pr.x > 0.001 ? pr.x : 0.10;
+  return max(1.0, floor(ww/per + 0.5)) / max(ww, 0.001);
+}
+
+float H_hazard(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.20;
+  float hz = hazardPhase(p, ww, wh, pr);
+  h += cham(hz-0.5, 0.14)*0.10;
+  // pr.y > 0.5: frameless. A band wrapping curved geometry (a drum's
+  // eight shared faces) must not draw a plaque lip on every facet.
+  if(pr.y < 0.5) h += cham(sdB(p, vec2(max(0.002,hx-0.008),max(0.002,hy-0.008))), 0.008)*0.14;
+  return h;
+}
+float H_valve(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float R = min(hx,hy)-0.012;
+  float h = 0.0;
+  h += cham(sdA(p, R*0.30, R*0.14), 0.014)*0.30;
+  float r = length(p), a = atan(p.y,p.x);
+  float n = max(3.0, pr.x);
+  float seg = 6.2831853/n;
+  float a2 = mod(a+seg*0.5, seg)-seg*0.5;
+  vec2 sp = vec2(cos(a2), sin(a2))*r;
+  float spoke = 0.30 + rndp(sdR(sp - vec2(R*0.62,0.0), vec2(R*0.34,R*0.09), R*0.05), R*0.05) * 0.34
+                * step(r, R*0.98) * step(R*0.30, r);
+  h = max(h, spoke);
+  h += boltp(p, R*0.14) * 0.30;
+  h += cham(sdA(p, R*0.98, R*0.05), 0.010)*0.20;
+  mat(1.0, step(length(p), R*0.20));                       // hub nut
+  mat(4.0, step(0.5, cham(sdA(p, R*0.98, R*0.05), 0.010)));  // turned outer rim
+  return h;
+}
+float H_seam(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.22;
+  h -= cham(sdB(vec2(0.,p.y), vec2(max(0.01,hx-0.010), 0.006)), 0.006)*0.20;
+  float n = max(2.0, floor(ww/0.09));
+  float pitch = ww/n;
+  float bx = mod(p.x + hx + pitch*0.5, pitch) - pitch*0.5;
+  float bb = min(0.014, pitch*0.28);
+  h += boltp(vec2(bx, p.y), bb) * 0.24 * step(abs(p.y), 0.018);
+  mat(1.0, step(length(vec2(bx,p.y)), bb*1.15));
+  mat(3.0, step(abs(p.y), 0.007) * step(abs(p.x), hx-0.010));   // the seam gasket itself
+  return h;
+}
+float H_pipe(vec2 p, float ww, float wh, vec4 pr){
+  float hx=ww*0.5, hy=wh*0.5;
+  float h=0.30;
+  bool vertical = pr.x>0.5;
+  float along = vertical? p.y : p.x;
+  float across = vertical? p.x : p.y;
+  float halfAcross = vertical? hx : hy;
+  h = max(h, 0.30 + domep(vec2(across,0.0), halfAcross*0.94)*0.30);
+  float pitch = 0.14;
+  float ring = mod(along + pitch*0.5, pitch) - pitch*0.5;
+  h -= cham(abs(ring)-0.010, 0.006) * 0.10;
+  mat(3.0, step(abs(ring), 0.010));      // the lagging band, not the pipe
+  return h;
+}
+// CLEAN METAL HAS NO NOISE IN ITS HEIGHT: machined SF
+// steel is flat; its variation lives in roughness and tone. The old
+// p*60 mill-scale mottle aliased into hammered-pewter static on every
+// shared strip the atlas packed small. Only a broad low-frequency sag
+// survives -- too slow to alias at any packing density.
+float H_plain(vec2 p, float seed){
+  return 0.30 + (vnoise(p*2.2 + seed*13.0)-0.5)*0.012;
+}
+// perforation grid: the hole field on the reference hold panels and
+// deck plates. pr.x = pitch in metres, pr.y = hole radius fraction.
+float H_perf(vec2 p, float ww, float wh, vec4 pr){
+  float pitch = pr.x > 0.0 ? pr.x : 0.032;
+  float rad = pitch * (pr.y > 0.0 ? pr.y : 0.30);
+  float border = pitch * 1.1;
+  vec2 g = vec2(wx(p.x/pitch), wx(p.y/pitch)) * pitch;
+  float inField = step(border, ww*0.5 - abs(p.x)) * step(border, wh*0.5 - abs(p.y));
+  float hole = rndp(-(length(g) - rad), rad*0.55) * inField;   // rounded countersink
+  float plate = rndp(sdR(p, vec2(ww*0.5, wh*0.5) - vec2(0.004), 0.010), 0.006);
+  return plate*0.55 - hole*0.62;
+}
+
+float H0(vec2 p, int kind, float seed, vec4 pr, float ww, float wh){
+  if(kind==0) return H_panel(p, ww, wh, pr);
+  if(kind==1) return H_rib(p, ww, wh, pr);
+  if(kind==2) return H_screen(p, ww, wh, pr);
+  if(kind==3) return H_buttons(p, ww, wh, seed);
+  if(kind==4) return H_hazard(p, ww, wh, pr);
+  if(kind==5) return H_valve(p, ww, wh, pr);
+  if(kind==6) return H_seam(p, ww, wh, pr);
+  if(kind==8) return H_pipe(p, ww, wh, pr);
+  if(kind==10) return H_perf(p, ww, wh, pr);
+  return H_plain(p, seed);
+}
+// uTPM: this region's texels per metre. Anything finer than a couple
+// of texels cannot be represented in the atlas rect and only aliases,
+// so every high-frequency term is sized against it instead of against
+// the metre.
+uniform float uTPM; uniform int uRim;
+// uWear: 0 = factory-fresh hull, 1 = derelict. Grime, oxide and edge
+// chipping all scale off this one dial; the geometry-derived cavity
+// darkening does NOT, because panel gaps have to read on a clean ship
+// too. A weathering amount is a look decision, not a material fact.
+uniform float uWear;
+// rim: round the region's own border off in the height field. On a
+// box face this meets the neighbouring face's rim at the edge, so a
+// hard 90-degree corner catches a highlight the way a bevel does --
+// small hardware's substitute for real chamfer geometry.
+float H(vec2 p, int kind, float seed, vec4 pr, float ww, float wh){
+  gMat = 0.0;
+  float h = H0(p, kind, seed, pr, ww, wh);
+  if(uRim==1){
+    float mn = min(ww, wh);
+    float bw = clamp(max(0.006, 2.5/uTPM), 0.0, mn*0.30);
+    h -= (1.0 - rndp(sdB(p, vec2(ww*0.5-bw, wh*0.5-bw)), bw)) * 0.24;
+  }
+  return h;
+}
+// octave weight: 1 well below the texel Nyquist, 0 at it
+float fcap(float f){ return 1.0 - smoothstep(uTPM*0.22, uTPM*0.5, f); }
+float fbm(vec2 p, float f0, int oct, float seed){
+  float a=0.5, s=0.0, w=0.0, f=f0;
+  for(int i=0;i<5;i++){
+    if(i>=oct) break;
+    s += a*fcap(f)*(vnoise(p*f + seed*7.3 + float(i)*17.1) - 0.5);
+    w += a; a *= 0.5; f *= 2.1;
+  }
+  return s/w;
+}
+`;
+
+const BAKE_VS = `#version 300 es
+void main(){
+  vec2 pos = vec2((gl_VertexID==2)?3.0:-1.0, (gl_VertexID==1)?3.0:-1.0);
+  gl_Position = vec4(pos,0.0,1.0);
+}`;
+
+const BAKE_FS = `#version 300 es
+precision highp float;
+${LIB_GLSL}
+uniform int uKind; uniform float uSeed; uniform vec4 uParams; uniform int uAccent;
+uniform float uWorldW, uWorldH; uniform vec2 uViewport; uniform vec2 uOrigin;
+uniform vec3 uTint; uniform int uPaint; uniform vec3 uTone;
+layout(location=0) out vec4 oAlbedoRough;
+layout(location=1) out vec4 oNormalMetal;
+layout(location=2) out vec4 oEmissive;
+// accent set, sci-fi rather than industrial: a hot saturated orange for
+// structure and hazard, cool white for signage, cyan and green for live
+// systems. The old ochre/amber pair read as painted steel signage --
+// military. These read as a designed livery.
+const vec3 ORANGE=vec3(0.900,0.330,0.050), AMBER=vec3(1.00,0.620,0.190),
+           SIGNAL=vec3(0.95,0.96,1.00), ALARM=vec3(1.00,0.105,0.055),
+           LIVE_C=vec3(0.240,0.800,0.940), LIVE_G=vec3(0.260,0.870,0.400);
+// SIGNAL is white and belongs to STENCIL MARKINGS ONLY. Accent 2
+// (A_AMBER) is the warm CRT/strip colour the dark references use for
+// every readout; the livery pass folded the two together and turned
+// every amber screen and light run white.
+// 3x5 stencil digits, packed bottom row first, MSB = left column
+const int FONT[10] = int[10](31599,11415,29671,29647,23497,31183,31215,29257,31727,31695);
+const int LETT[8] = int[8](11245,27566,14627,27502,31143,31140,14699,23533);
+float glyph(int bits, vec2 q, float cell){
+  vec2 g = floor(q / cell);
+  if(g.x < 0.0 || g.x > 2.0 || g.y < 0.0 || g.y > 4.0) return 0.0;
+  return float((bits >> (int(g.y) * 3 + (2 - int(g.x)))) & 1);
+}
+mat2 rot(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }
+
+void main(){
+  // gl_FragCoord is in WINDOW space -- absolute framebuffer pixels, not
+  // viewport-relative -- so uOrigin (this region's own px,py) is
+  // subtracted back out before the divide.
+  vec2 uv = (gl_FragCoord.xy - uOrigin) / uViewport;
+  vec2 p = (uv - 0.5) * vec2(uWorldW, uWorldH);
+  vec2 texel = vec2(uWorldW, uWorldH) / uViewport;
+  float e = max(0.0006, min(uWorldW,uWorldH) * 0.0022);
+
+  // ---- height + normal, 2x2 supersampled: the SDF steps are the one
+  // thing that still aliases at texel scale once the noise is capped
+  float hc = 0.0; vec3 n = vec3(0.0);
+  for(int sy=0; sy<2; sy++) for(int sx=0; sx<2; sx++){
+    vec2 ps = p + (vec2(float(sx), float(sy)) - 0.5) * 0.5 * texel;
+    float h = H(ps, uKind, uSeed, uParams, uWorldW, uWorldH);
+    float dx = H(ps+vec2(e,0.0), uKind,uSeed,uParams,uWorldW,uWorldH) - H(ps-vec2(e,0.0), uKind,uSeed,uParams,uWorldW,uWorldH);
+    float dy = H(ps+vec2(0.0,e), uKind,uSeed,uParams,uWorldW,uWorldH) - H(ps-vec2(0.0,e), uKind,uSeed,uParams,uWorldW,uWorldH);
+    hc += h * 0.25;
+    n += normalize(vec3(-dx/(2.0*e)*0.62, -dy/(2.0*e)*0.62, 1.0));
+  }
+  n = normalize(n);
+  float hCentre = H(p, uKind, uSeed, uParams, uWorldW, uWorldH);   // also writes gMat
+  float matID = gMat;
+
+  // ---- masks from the SAME height field, evaluated once at the texel
+  // centre. These are what let albedo and roughness carry information
+  // the normal map does not already carry.
+  float e2 = max(e*6.0, 2.5/uTPM);
+  float ring = H(p+vec2(e2,0.0),uKind,uSeed,uParams,uWorldW,uWorldH) + H(p-vec2(e2,0.0),uKind,uSeed,uParams,uWorldW,uWorldH)
+             + H(p+vec2(0.0,e2),uKind,uSeed,uParams,uWorldW,uWorldH) + H(p-vec2(0.0,e2),uKind,uSeed,uParams,uWorldW,uWorldH);
+  float cav  = clamp((ring*0.25 - hc) * 7.0, 0.0, 1.0);   // neighbours higher: a groove or a foot of a step
+  float cvx  = clamp((hc - ring*0.25) * 7.0, 0.0, 1.0);   // neighbours lower: a ridge or a bolt crown
+  float slope = clamp(length(n.xy) / max(n.z, 0.05) * 0.55, 0.0, 1.0);   // the flanks of every step and rim
+  float edge = max(cvx, slope*0.85);
+
+  /* ---- grime and wear.
+     The previous mask read as disruptive-pattern camouflage, for three
+     compounding reasons, all fixed here:
+       1. It was driven mostly by an isotropic fbm at ~1.6 cycles/metre.
+          Three octaves off that base land at roughly 60, 30 and 15 cm --
+          which IS the blob scale of woodland camo. Dirt has no such
+          mid-frequency; it has cavities, gravity streaks and fine
+          mottle, and nothing in between.
+       2. The dirt colour was a fixed warm brown mixed up to 70% against
+          a cool grey base. Two hues at high contrast is a pattern, not
+          a soiling. Grime is now derived FROM the surface colour, so it
+          can only darken and slightly warm what is already there.
+       3. Per-region tone jitter was +/-30%, so every face of a prop was
+          a different value -- a patchwork on top of the blobs.
+     gBroad survives only as a gentle tonal drift.
+
+     SECOND PASS. The above was not enough, because the loudest channel
+     was not albedo. Measured on a flat 1.2 x 0.9 m field with no relief
+     at all -- everything there is invented texture -- the standard
+     deviations were:
+         albedo 0.027   roughness 0.050   METALNESS 0.048
+     and a third of each survived a 20 cm blur. Metalness swinging from
+     0.90 to 0.32 in patches is not dirt, it is two different materials
+     tiled across one plate, and that is what the eye was reading as
+     disruptive pattern. Now: metal only dulls (0.90 -> 0.68), grime is
+     almost entirely cavity-driven, streaks must start at some relief,
+     chips are gated behind edge wear, and gBroad drops to ~3 m so it is
+     a tone for the whole plate rather than a shape on it. Same
+     measurement after: albedo 0.0016, roughness 0.017, metalness
+     0.0027. */
+  float gBroad = fbm(p, 0.30, 1, uSeed);                // ~3 m: a tone for the whole plate, not a shape on it
+  float gFine  = fbm(p, 34.0, 3, uSeed + 3.0);          // ~3 cm mottle: texture, not shapes
+  float fs = min(44.0, uTPM*0.22);
+  // long thin runs (thin in x, long in y), not 4 x 40 cm lozenges
+  float streak = vnoise(vec2(p.x*fs, p.y*1.1) + uSeed*5.1);
+  streak = smoothstep(0.72, 0.97, streak);
+  // ...and they only start somewhere: a streak runs DOWN from a lip, a
+  // seam or a bolt. On open flat plate there is nothing to run from.
+  streak *= 0.25 + 0.75*smoothstep(0.05, 0.40, cav + slope*0.6);
+  float ang = h21(vec2(uSeed, 3.7)) * PI;
+  vec2 q = rot(ang) * p;
+  float fs2 = min(80.0, uTPM*0.28);
+  float scr = smoothstep(0.91, 0.97, vnoise(vec2(q.x*fs2*0.06, q.y*fs2) + uSeed*9.0))
+            + smoothstep(0.93, 0.98, vnoise(vec2(q.x*fs2*0.05, q.y*fs2*1.7) + uSeed*4.0 + 11.0));
+  scr = clamp(scr, 0.0, 1.0) * fcap(fs2);
+  float grime = clamp(0.02 + cav*0.85 + streak*0.30 + 0.14*gFine, 0.0, 1.0) * uWear;
+  float wear  = edge * clamp(0.55 + 0.9*gFine, 0.0, 1.0) * uWear;
+
+  // ---- value comes from the TINT, height only modulates it.
+  float t = clamp(hc, 0.0, 1.0);
+  float shade = mix(0.80, 1.14, t);
+  vec3 mAlb = uTint * uTone * shade * (0.96 + 0.07*gBroad);
+  float mRough = mix(0.26, 0.46, uWear) + 0.08*gFine, mMetal = 0.90;
+  // grime and oxide both derived from the surface itself: same hue
+  // family, darker and a touch warmer, so they soil rather than pattern
+  vec3 grimeCol = mAlb * 0.34 + vec3(0.009, 0.008, 0.006);
+  vec3 rustCol  = mix(mAlb, vec3(0.26,0.12,0.05), 0.55);
+  mAlb   = mix(mAlb, mAlb*1.35 + 0.03, wear*0.65);                       // worn edges: brighter, polished
+  mRough = mix(mRough, 0.18, wear);
+  mAlb   = mix(mAlb, grimeCol, grime*0.55);
+  mAlb   = mix(mAlb, rustCol, cav*grime*0.35);
+  mRough = mix(mRough, 0.80, grime);
+  // dirt DULLS metal, it does not turn it into plastic. Driving
+  // metalness from 0.90 down to 0.32 across a blobby mask was painting
+  // two different materials over one flat plate -- measured on a flat
+  // 1.2 x 0.9 m field, metalness had a standard deviation of 0.048 and
+  // a third of that survived a 20 cm blur. That was the camouflage.
+  mMetal = mix(mMetal, 0.68, grime*0.60);
+  mAlb  += scr * 0.06 * (0.3 + 0.7*uWear); mRough = mix(mRough, 0.26, scr*0.7);
+
+  vec3 albedo = mAlb; float rough = mRough, metal = mMetal;
+  if(uPaint==1){
+    vec3 pAlb = uTint * uTone * shade * (0.97 + 0.05*gBroad);
+    float pRough = mix(0.40, 0.58, uWear) + 0.12*gFine;
+    pAlb   = mix(pAlb, pAlb*0.34 + vec3(0.009,0.008,0.006), grime*0.45);
+    pRough = mix(pRough, 0.84, grime*0.8);
+    // chips now ride the FINE octave, so they are paint flakes at the
+    // edges rather than continental blobs across a panel
+    // chips are gated by wear, which is itself gated by edge proximity,
+    // so an open panel field cannot chip. Ungated, 12% of a flat plate
+    // was being repainted to bare metal through a hard step.
+    float chip = step(0.5, wear*1.6 + 0.30*(gFine + 0.5)) * uWear;
+    albedo = mix(pAlb, mAlb, chip); rough = mix(pRough, mRough, chip); metal = mix(0.02, mMetal, chip);
+  }
+  /* ---- relief detail. Everything below keys off the height field, so
+     it lands exactly where the geometry already gives the eye a reason
+     to look, and adds nothing to open plate. That is the opposite trade
+     from the noise that was making camouflage: information ON the
+     features, none between them. */
+
+  // 1. CONTACT BURNISH. Every proud edge and crown in a ship gets
+  // handled, scuffed past and wiped. It goes brighter and much smoother
+  // than the field around it, and unlike edge CHIPPING this happens on
+  // a maintained hull too, so it is not gated behind uWear.
+  float burnish = cvx * (1.0 - grime*0.7) * (0.45 + 0.55*(1.0 - uWear*0.4));
+  albedo = mix(albedo, albedo*1.30 + 0.012, burnish*0.55);
+  rough  = mix(rough, max(0.12, rough*0.45), burnish*0.65);
+  metal  = mix(metal, min(0.95, metal + 0.25), burnish*0.5*(1.0-float(uPaint)));
+
+  // 2. CREASE LINE. A dark accent exactly where a steep flank meets a
+  // floor -- the line art that makes a hard-surface read snap. Narrow on
+  // purpose: this is a line, not a shadow.
+  float crease = smoothstep(0.45, 0.95, slope) * cav;
+  albedo *= 1.0 - crease*0.45;
+  rough  += crease*0.18;
+
+  // 3. CAVITY. Darker, rougher, and slightly COOLER than the surface --
+  // what sits in a groove is shadow plus settled dust, never a warmer
+  // version of the plate.
+  albedo *= 1.0 - cav*0.30;
+  albedo.b *= 1.0 + cav*0.06;
+  albedo.r *= 1.0 - cav*0.04;
+  rough  += cav*0.10;
+
+  // 4. MATERIAL ID. The height functions tag what each feature IS; a
+  // fastener, a keycap and a gasket are separate parts and stop being
+  // painted in the plate's paint here.
+  float mF = 1.0 - abs(matID - 1.0), mK = 1.0 - abs(matID - 2.0),
+        mG = 1.0 - abs(matID - 3.0), mT = 1.0 - abs(matID - 4.0);
+  mF = clamp(mF,0.0,1.0); mK = clamp(mK,0.0,1.0); mG = clamp(mG,0.0,1.0); mT = clamp(mT,0.0,1.0);
+  // fastener: bare cadmium-ish alloy, cooler and lighter than the plate,
+  // low roughness on the crown, and it does not carry the plate's paint
+  vec3 boltAlb = mix(vec3(0.34,0.35,0.37), vec3(0.20,0.19,0.17), grime);
+  albedo = mix(albedo, boltAlb * uTone * (0.85 + 0.30*t), mF*0.80);
+  rough  = mix(rough, 0.24 + 0.42*grime, mF*0.80);
+  metal  = mix(metal, 0.94, mF*0.85);
+  // machined trim ring: same alloy family as the plate but bare and
+  // turned, so it is brighter and much glossier than the paint
+  albedo = mix(albedo, albedo*1.22 + 0.010, mT*0.40);
+  rough  = mix(rough, rough*0.62 + 0.06 + 0.30*grime, mT*0.55);
+  metal  = mix(metal, min(0.95, metal + 0.30), mT*0.30*(1.0-grime*0.5));
+  // keycap: moulded polymer -- flat, dielectric, and it does not grime
+  // the way a horizontal steel surface does
+  albedo = mix(albedo, mix(vec3(0.055,0.058,0.062), vec3(0.16,0.155,0.15), grime*0.5) * uTone, mK*0.85);
+  rough  = mix(rough, 0.52, mK*0.85);
+  metal  = mix(metal, 0.02, mK*0.9);
+  // gasket / lagging band: matte black rubber, the darkest thing on any
+  // prop and the strongest single value contrast available
+  albedo = mix(albedo, vec3(0.022,0.021,0.020) * (1.0 + 0.5*t), mG*0.88);
+  rough  = mix(rough, 0.93, mG*0.88);
+  metal  = mix(metal, 0.0, mG*0.9);
+  float ao = (1.0 - cav*0.55) * (1.0 - slope*0.18) * mix(0.84, 1.0, clamp(hc*1.5, 0.0, 1.0));
+  vec3 emissive = vec3(0.0);
+
+  // ---- stencil ID on any plate big enough to carry one: two digits and
+  // a bar, lower-left, in faded marking paint under the same grime
+  if((uKind==0 || uKind==7) && uWorldW > 0.26 && uWorldH > 0.16){
+    // bay marking: two digits over a letter, big enough to read across
+    // a room. The reference interiors letter every structural bay this
+    // way, at roughly a fifth of the panel height -- the old 3-texel
+    // stencil was too small to register as signage at all.
+    float cell = max(0.014, 4.0/uTPM);
+    if(cell*11.0 < uWorldH*0.85 && cell*7.0 < uWorldW*0.8){
+      vec2 o = vec2(-uWorldW*0.5 + cell*1.6, uWorldH*0.5 - cell*6.6);
+      int d1 = int(floor(h21(vec2(uSeed,1.3))*9.99)), d2 = int(floor(h21(vec2(uSeed,2.9))*9.99));
+      int lt = LETT[int(floor(h21(vec2(uSeed,5.1))*7.99))];
+      float st = glyph(FONT[d1], p - o, cell) + glyph(FONT[d2], p - o - vec2(cell*4.0, 0.0), cell)
+               + glyph(lt, p - o - vec2(cell*0.5, -cell*6.4), cell);
+      float bar = step(abs(p.y - (o.y - cell*1.1)), cell*0.32) * step(o.x, p.x) * step(p.x, o.x + cell*7.0);
+      st = clamp(st + bar, 0.0, 1.0) * (0.90 - 0.45*grime) * (1.0 - wear*0.5);
+      albedo = mix(albedo, SIGNAL * 0.80 * uTone, st);
+      rough = mix(rough, mix(0.40, 0.62, uWear), st); metal = mix(metal, 0.0, st);
+    }
+  }
+
+  if(uKind==4){
+    // hazard banding, orange on white rather than ochre on gunmetal --
+    // a livery stripe, not a stencilled warning on bare steel
+    float hz = hazardPhase(p, uWorldW, uWorldH, uParams);
+    // edge softness follows the stripe frequency, so a fine pitch does
+    // not alias and a coarse one does not go soft
+    float aa = clamp(hazardFreq(uWorldW, uParams) * 1.6 / uTPM, 0.02, 0.30);
+    float m = smoothstep(0.5-aa, 0.5+aa, hz);
+    vec3 hot  = ORANGE * (0.90 + 0.20*gBroad) * (1.0 - grime*0.45);
+    vec3 cool = SIGNAL * 0.72 * (1.0 - grime*0.55);
+    albedo = mix(mix(albedo, cool, 0.85), hot, m);
+    metal = mix(metal, 0.0, 0.9);
+    rough = mix(rough, mix(0.40, 0.56, uWear) + grime*0.25, 0.9);
+  }
+  if(uKind==2){
+    vec3 ac = uAccent==3 ? LIVE_C : (uAccent==4 ? LIVE_G : (uAccent==5 ? ALARM : (uAccent==1 ? ORANGE : AMBER)));
+    float hx=uWorldW*0.5-0.044, hy=uWorldH*0.5-0.044;
+    float inScreen = step(abs(p.x),max(0.0,hx)) * step(abs(p.y),max(0.0,hy));
+    float sl = triw(p.y*min(140.0, uTPM*0.3));
+    float glow = inScreen * mix(0.82,1.0, step(0.5,sl)) * fcap(min(140.0, uTPM*0.3)) + inScreen * (1.0 - fcap(min(140.0, uTPM*0.3))) * 0.91;
+    glow *= 0.88 + 0.12 * vnoise(p*vec2(1.0,40.0) + uSeed);
+    albedo = mix(albedo, ac*0.5, inScreen*0.7);
+    emissive = ac * glow * 1.9 * (1.0 - grime*0.35);
+    rough = mix(rough, 0.18 + grime*0.3, inScreen);
+    metal = mix(metal, 0.0, inScreen);
+    ao = mix(ao, 1.0, inScreen);
+  }
+  if(uKind==6 && uAccent>0){
+    // a run of light, not a painted line: a recessed channel with a
+    // diffusing lens down the middle and a bright soft falloff at the
+    // shoulders. The long continuous strip is the single most
+    // characteristic element of the reference interiors.
+    vec3 ac = uAccent==1 ? ORANGE : (uAccent==2 ? AMBER : (uAccent==3 ? LIVE_C : (uAccent==5 ? ALARM : LIVE_G)));
+    float across = (uWorldW >= uWorldH) ? p.y : p.x;
+    float hwid = 0.5 * min(uWorldW, uWorldH);
+    float lens = 1.0 - smoothstep(hwid*0.30, hwid*0.52, abs(across));
+    float bloom = 1.0 - smoothstep(hwid*0.45, hwid*0.95, abs(across));
+    emissive += ac * (lens*2.6 + bloom*0.45);
+    albedo = mix(albedo, ac*0.45 + 0.30, lens*0.85);
+    rough = mix(rough, 0.14, lens);
+    metal = mix(metal, 0.0, lens);
+    ao = mix(ao, 1.0, max(lens, bloom*0.6));
+  }
+  oAlbedoRough = vec4(albedo, rough);
+  oNormalMetal = vec4(n*0.5+0.5, metal);
+  oEmissive = vec4(emissive, ao);
+}`;
+
+const DISP_VS = `#version 300 es
+in vec3 aPos; in vec3 aNormal; in vec2 aUV;
+uniform mat4 uMVP; uniform mat4 uModel;
+out vec3 vN; out vec2 vUV; out vec3 vWP;
+void main(){
+  vec4 wp = uModel * vec4(aPos,1.0);
+  vWP = wp.xyz;
+  vN = mat3(uModel) * aNormal;
+  vUV = aUV;
+  gl_Position = uMVP * wp;
+}`;
+
+const DISP_FS = `#version 300 es
+precision highp float;
+in vec3 vN; in vec2 vUV; in vec3 vWP;
+uniform sampler2D uAR, uNM, uEM;
+uniform vec3 uKeyPos, uKeyCol, uFillPos, uFillCol, uRimPos, uRimCol, uCamPos;
+uniform vec3 uSky, uGnd;
+uniform float uAmb;
+uniform int uViewMode;
+out vec4 oColor;
+#define PI 3.14159265
+// GGX / Smith / Schlick, metallic workflow: a metal has no diffuse and
+// a coloured F0. The old shader lit metal=0.8 with full albedo diffuse
+// and a white highlight, which is the recipe for coated plastic.
+vec3 pointLight(vec3 N, vec3 V, vec3 P, vec3 Lp, vec3 Lc, vec3 diff, vec3 F0, float rough, float ao){
+  vec3 Ld = Lp - P; float d2 = dot(Ld, Ld); vec3 L = Ld * inversesqrt(d2);
+  float NdL = max(dot(N, L), 0.0); if(NdL <= 0.0) return vec3(0.0);
+  vec3 Hv = normalize(L + V);
+  float NdV = max(dot(N, V), 1e-4), NdH = max(dot(N, Hv), 0.0), VdH = max(dot(V, Hv), 0.0);
+  float a = max(rough*rough, 0.002), a2 = a*a;
+  float dd = NdH*NdH*(a2-1.0)+1.0;
+  float D = a2 / (PI*dd*dd);
+  float k = (rough+1.0)*(rough+1.0)/8.0;
+  float G = (NdV/(NdV*(1.0-k)+k)) * (NdL/(NdL*(1.0-k)+k));
+  vec3 F = F0 + (1.0-F0)*pow(1.0-VdH, 5.0);
+  vec3 spec = D*G*F / max(4.0*NdV*NdL, 1e-4);
+  float att = 1.0 / (0.15 + d2);
+  // cavities shade the highlight more than the diffuse
+  return (diff*(1.0-F)/PI * ao + spec * ao*ao) * Lc * NdL * att;
+}
+vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
+void main(){
+  vec4 ar = texture(uAR, vUV);
+  vec4 nm = texture(uNM, vUV);
+  vec4 em = texture(uEM, vUV);
+  vec3 albedo = ar.rgb; float rough = clamp(ar.a,0.04,1.0);
+  vec3 nrmMap = normalize(nm.rgb*2.0-1.0); float metal = nm.a; float ao = em.a;
+  vec3 N = normalize(vN);
+  vec3 T; if(abs(N.y)>0.999){ T=vec3(1.0,0.0,0.0);} else { T=normalize(vec3(N.z,0.0,-N.x)); }
+  vec3 B = cross(N,T);
+  vec3 worldN = normalize(T*nrmMap.x + B*nrmMap.y + N*nrmMap.z);
+
+  if(uViewMode==1){ oColor=vec4(pow(albedo,vec3(0.4545)),1.0); return; }
+  if(uViewMode==2){ oColor=vec4(worldN*0.5+0.5,1.0); return; }
+  if(uViewMode==3){ oColor=vec4(vec3(rough),1.0); return; }
+  if(uViewMode==4){ oColor=vec4(pow(em.rgb,vec3(0.4545)),1.0); return; }
+  if(uViewMode==5){ oColor=vec4(vec3(ao),1.0); return; }
+  if(uViewMode==6){ oColor=vec4(vec3(metal),1.0); return; }
+
+  vec3 V = normalize(uCamPos - vWP);
+  vec3 F0 = mix(vec3(0.04), albedo, metal);
+  vec3 diff = albedo * (1.0 - metal);
+  vec3 col = vec3(0.0);
+  col += pointLight(worldN, V, vWP, uKeyPos, uKeyCol, diff, F0, rough, ao);
+  col += pointLight(worldN, V, vWP, uFillPos, uFillCol, diff, F0, rough, ao);
+  col += pointLight(worldN, V, vWP, uRimPos, uRimCol, diff, F0, rough, ao);
+  // hemisphere ambient standing in for a lit room's bounce. On the
+  // clean look this carries most of the image, which is what separates
+  // the reference interiors (broad soft light, everything legible) from
+  // a Doom-3 corridor (one hot lamp, everything else black).
+  float sky = worldN.y*0.5+0.5;
+  vec3 amb = mix(uGnd, uSky, sky) * uAmb;
+  // a rough Fresnel-weighted ambient specular so metal reads as metal
+  // even where no point light reaches it
+  float fr = pow(1.0 - max(dot(worldN, V), 0.0), 5.0);
+  vec3 ambSpec = mix(uSky, vec3(1.0), 0.3) * uAmb * (F0 + (1.0-F0)*fr) * (1.0 - rough*0.75);
+  col += amb * diff * ao + ambSpec * ao*ao * 0.20;
+  col += em.rgb;
+  col = aces(col);
+  col = pow(col, vec3(0.4545));
+  oColor = vec4(col,1.0);
+}`;
+
+const FLAT_VS = `#version 300 es
+in vec3 aPos; uniform mat4 uMVP; out vec3 vWP;
+void main(){ vWP=aPos; gl_Position = uMVP*vec4(aPos,1.0); }`;
+const FLAT_FS = `#version 300 es
+precision highp float; in vec3 vWP; out vec4 oColor;
+uniform vec3 uN, uKeyPos, uKeyCol, uFillPos, uFillCol, uSky, uGnd, uAlb, uCamPos;
+uniform float uAmb, uFoot, uRough;
+vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
+void main(){
+  vec3 alb = uAlb;
+  vec3 V = normalize(uCamPos - vWP);
+  vec3 c = vec3(0.0);
+  // deck plate is a dark GLOSS, not a matte grey card: the reference
+  // floors are readable mostly through what they reflect
+  float sh = 2.0/max(uRough*uRough, 0.004);
+  vec3 Ld = uKeyPos - vWP; float d2 = dot(Ld,Ld); vec3 L = Ld*inversesqrt(d2);
+  c += (alb*max(dot(uN,L),0.0) + pow(max(dot(reflect(-L,uN),V),0.0), sh)*0.35) * uKeyCol/(0.15+d2);
+  Ld = uFillPos - vWP; d2 = dot(Ld,Ld); L = Ld*inversesqrt(d2);
+  c += (alb*max(dot(uN,L),0.0) + pow(max(dot(reflect(-L,uN),V),0.0), sh)*0.25) * uFillCol/(0.15+d2);
+  c += alb * mix(uGnd, uSky, uN.y*0.5+0.5) * uAmb * 0.5;
+  c += mix(uSky, vec3(1.0), 0.25) * uAmb * 0.09 * pow(1.0 - max(dot(uN,V),0.0), 4.0) * (1.0 - uRough*0.8);
+  // contact shadow under the prop's footprint -- grounds it on the deck
+  if(uN.y > 0.5){ float r = length(vWP.xz); c *= 1.0 - 0.80*(1.0 - smoothstep(uFoot*0.45, uFoot*1.35, r)); }
+  oColor = vec4(pow(aces(c),vec3(0.4545)),1.0);
+}`;
+
+function compile(gl, type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + '\n' + src);
+  return s;
+}
+function program(gl, vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+function uniforms(gl, p, names) {
+  const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u;
+}
+
+const bakeProg = program(gl, BAKE_VS, BAKE_FS);
+const bakeU = uniforms(gl, bakeProg, ['uKind', 'uSeed', 'uParams', 'uAccent', 'uWorldW', 'uWorldH', 'uViewport', 'uOrigin', 'uTint', 'uPaint', 'uTone', 'uTPM', 'uRim', 'uWear']);
+const dispProg = program(gl, DISP_VS, DISP_FS);
+const dispU = uniforms(gl, dispProg, ['uMVP', 'uModel', 'uAR', 'uNM', 'uEM', 'uKeyPos', 'uKeyCol', 'uFillPos', 'uFillCol', 'uRimPos', 'uRimCol', 'uSky', 'uGnd', 'uAmb', 'uCamPos', 'uViewMode']);
+const flatProg = program(gl, FLAT_VS, FLAT_FS);
+const flatU = uniforms(gl, flatProg, ['uMVP', 'uN', 'uKeyPos', 'uKeyCol', 'uFillPos', 'uFillCol', 'uSky', 'uGnd', 'uAlb', 'uCamPos', 'uAmb', 'uFoot', 'uRough']);
+const ANISO = gl.getExtension('EXT_texture_filter_anisotropic');
+
+/* ---- LOOK: the whole art direction in one object ---------------------
+   CLEAN is the reference interiors: a lit, maintained, high-value hull
+   -- pale composite shells, saturated orange structure, long cool light
+   runs, almost no weathering, broad soft lighting.
+   DERELICT is the same props on the ship as found: everything darker,
+   grime and chipping fully on, one hot low key light against near-black
+   ambient. Same geometry, same bake, two dials. */
+const LOOKS = {
+  clean:    { metal: [0.55, 0.56, 0.57], value: 1.75, wear: 0.16,
+              key: [1.00, 0.97, 0.93], keyI: 2.2, fill: [0.55, 0.65, 0.85], fillI: 1.05,
+              rim: [0.80, 0.86, 1.00], rimI: 0.85, amb: 2.3,
+              sky: [0.30, 0.34, 0.42], gnd: [0.20, 0.19, 0.18],
+              bg: [0.085, 0.090, 0.100], floor: [0.085, 0.086, 0.084], floorRough: 0.22 },
+  // value 0.75 and amb/rim back to where they were: the revert pass
+  // brought the palette back to a dark register but then quietly gave
+  // the derelict rig more ambient (0.9 -> 1.15) and a stronger rim
+  // (0.30 -> 0.45), so the result landed brighter than the version that
+  // was actually preferred. Both are back down.
+  derelict: { metal: [0.34, 0.35, 0.35], value: 0.75, wear: 1.00,
+              key: [1.00, 0.78, 0.58], keyI: 3.6, fill: [0.38, 0.50, 0.80], fillI: 0.36,
+              rim: [0.42, 0.55, 0.85], rimI: 0.30, amb: 0.90,
+              sky: [0.11, 0.13, 0.18], gnd: [0.045, 0.045, 0.042],
+              bg: [0.018, 0.017, 0.016], floor: [0.055, 0.058, 0.052], floorRough: 0.70 },
+};
+let LOOK = LOOKS.derelict;   // the ship as found -- the bright livery is the K toggle
+
+function makeRT(size) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+
+function bakeProp(finalized) {
+  const size = finalized.texSize;
+  const texAR = makeRT(size), texNM = makeRT(size), texEM = makeRT(size);
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texAR, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, texNM, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, texEM, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+  gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(bakeProg);
+  gl.viewport(0, 0, size, size);
+  gl.disable(gl.SCISSOR_TEST);
+  gl.clearColor(0.30, 0.293, 0.283, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.SCISSOR_TEST);
+  for (const r of finalized.regions) {
+    gl.viewport(r.px, r.py, r.pw, r.ph);
+    gl.scissor(r.px, r.py, r.pw, r.ph);
+    gl.uniform1i(bakeU.uKind, r.kind);
+    gl.uniform1f(bakeU.uSeed, r.seed);
+    gl.uniform4f(bakeU.uParams, r.params[0], r.params[1], r.params[2], r.params[3]);
+    gl.uniform1i(bakeU.uAccent, r.accent);
+    gl.uniform1f(bakeU.uWorldW, r.w);
+    gl.uniform1f(bakeU.uWorldH, r.h);
+    gl.uniform2f(bakeU.uViewport, r.pw, r.ph);
+    gl.uniform2f(bakeU.uOrigin, r.px, r.py);
+    // untinted regions are bare machined alloy, which is now a real
+    // albedo instead of "whatever the ramp said"
+    const tn = r.tint || LOOK.metal;
+    const v = LOOK.value;
+    gl.uniform3f(bakeU.uTint, tn[0] * v, tn[1] * v, tn[2] * v);
+    gl.uniform1f(bakeU.uWear, LOOK.wear);
+    gl.uniform1i(bakeU.uPaint, r.paint ? 1 : 0);
+    // per-region tone: no two plates off the same ramp read identical --
+    // a small brightness drift and a hint of hue, seeded like the rest
+    // per-region tone: enough that no two plates are identical, not so
+    // much that a prop reads as a patchwork of differently-coloured
+    // faces. +/-30% was the latter.
+    const j1 = jHash(r.seed * 1.7 + 0.3), j2 = jHash(r.seed * 2.9 + 1.1);
+    const tb = 1.0 + 0.07 * j1;
+    gl.uniform3f(bakeU.uTone, tb * (1.0 + 0.020 * j2), tb, tb * (1.0 - 0.020 * j2));
+    gl.uniform1f(bakeU.uTPM, r.pw / r.w);
+    gl.uniform1i(bakeU.uRim, r.rim ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  gl.disable(gl.SCISSOR_TEST);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.deleteFramebuffer(fbo);
+  // mipmaps: without them every texture minifies by point-sampling
+  // level 0, and any real detail shimmers the moment the prop is more
+  // than a metre or two away -- the other half of the old "noise turns
+  // into static" problem
+  for (const t of [texAR, texNM, texEM]) {
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    if (ANISO) gl.texParameterf(gl.TEXTURE_2D, ANISO.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(ANISO.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+  }
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  return { texAR, texNM, texEM };
+}
+
+function uploadMesh(vertices) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+  const stride = 8 * 4;
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 24);
+  gl.bindVertexArray(null);
+  return { vao, count: vertices.length / 8 };
+}
+
+// ---- build every prop: geometry + baked atlas, once at load -----------
+/* atlasFor -- pick the atlas size by MEASURING the pack, not by
+   guessing from the prop's bounding box. The packer holds one
+   texels-per-metre for a whole prop, so a single prop with many small
+   trim strips can starve its hero faces at 1024 while a large simple
+   prop is fine there. Pack at 1024; if anything lands under 8 texels on
+   a side, repack at 2048. */
+function atlasFor(i) {
+  /* 2048 is the ceiling on purpose. Three RGBA targets at 4096 cost
+     192 MB for ONE prop, and measured on the two biggest props it only
+     lifted texel density from ~330 to ~640 while still leaving small
+     regions starved -- 4x the memory for a partial fix. The real
+     remedy was pooling the bevel trim into tile regions (see
+     tileRegion in propkit), which cut the capsule hatch from 87
+     regions to 54 and is free. */
+  const f = finalizeProp(i, 1024);
+  let minPx = 1e9;
+  for (const r of f.regions) minPx = Math.min(minPx, r.pw, r.ph);
+  if (minPx >= 8 && Math.max(...PROPS[i].size) <= 1.5) return f;
+  return finalizeProp(i, 2048);
+}
+
+const LOADED = PROPS.map((_, i) => {
+  // big props get a 2048 atlas: the packer's uniform texels-per-metre
+  // rule means a 2.4 m container at 1024 starves every region on it
+  const f = atlasFor(i);
+  const tex = bakeProp(f);
+  const mesh = uploadMesh(f.vertices);
+  return { name: f.name, room: f.room, sub: f.sub, size: f.size, tex, mesh };
+});
+
+// floor + backdrop, flat-shaded, no texture
+function quadXZ(x0, z0, x1, z1, y) {
+  return new Float32Array([x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z0, x1, y, z1, x0, y, z1]);
+}
+function quadXY(x0, y0, x1, y1, z) {
+  return new Float32Array([x0, y0, z, x1, y0, z, x1, y1, z, x0, y0, z, x1, y1, z, x0, y1, z]);
+}
+function uploadFlat(verts) {
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+  return { vao, count: verts.length / 3 };
+}
+const floorMesh = uploadFlat(quadXZ(-9, -9, 9, 9, 0));
+const wallMesh = uploadFlat(quadXY(-9, 0, 9, 8, -4.5));
+
+// ---- matrix helpers (column-major, mirroring the corridor renderer's own math) --
+function mIdent() { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; }
+function mMul(a, b) {
+  const o = new Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k];
+    o[c * 4 + r] = s;
+  }
+  return o;
+}
+function mPersp(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+}
+function mLookAt(eye, target, up) {
+  let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+  let zl = Math.hypot(zx, zy, zz) || 1; zx /= zl; zy /= zl; zz /= zl;
+  let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
+  let xl = Math.hypot(xx, xy, xz) || 1; xx /= xl; xy /= xl; xz /= xl;
+  const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  return [xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0,
+    -(xx * eye[0] + xy * eye[1] + xz * eye[2]), -(yx * eye[0] + yy * eye[1] + yz * eye[2]), -(zx * eye[0] + zy * eye[1] + zz * eye[2]), 1];
+}
+
+// ---- camera + selection state ------------------------------------------
+let current = 0, viewMode = 0;
+let az = 0.7, el = 0.35, dist = 2.2;
+// key light: warm, low, slowly circling so the relief is read under a
+// moving grazing light instead of one fixed product-shot angle
+let lightAz = -0.9, lightEl = 0.42, lightRun = true, lastT = 0;
+let dragging = false, lastX = 0, lastY = 0;
+
+function selectProp(i) {
+  current = (i + LOADED.length) % LOADED.length;
+  const p = LOADED[current];
+  document.getElementById('pname').textContent = p.name;
+  document.getElementById('psub').textContent = p.sub;
+  document.getElementById('proom').textContent = ROOMS[p.room] || p.room;
+  document.getElementById('stat').textContent = (p.mesh.count) + ' verts';
+  const maxSize = Math.max(...p.size);
+  dist = maxSize * 2.1;
+  document.querySelectorAll('#list .item').forEach(el => el.classList.toggle('on', +el.dataset.i === current));
+}
+
+function buildList() {
+  const el = document.getElementById('list');
+  el.innerHTML = '';
+  /* Order comes from ROOM_ORDER, but the SET of rooms comes from the
+     props themselves. The list used to iterate ROOM_ORDER alone, so a
+     prop filed under a room nobody had added to that array simply never
+     appeared -- eleven props, including all three escape-bay assets,
+     were built and baked and invisible. A hardcoded list of categories
+     is a silent-failure machine; derive it. */
+  const rooms = ROOM_ORDER.filter(r => LOADED.some(p => p.room === r));
+  for (const p of LOADED) if (!rooms.includes(p.room)) rooms.push(p.room);
+  for (const room of rooms) {
+    const h = document.createElement('h2'); h.textContent = ROOMS[room] || room; el.appendChild(h);
+    LOADED.forEach((p, i) => {
+      if (p.room !== room) return;
+      const it = document.createElement('div'); it.className = 'item'; it.dataset.i = i;
+      it.innerHTML = p.name + '<small>' + p.sub + '</small>';
+      it.onclick = () => selectProp(i);
+      el.appendChild(it);
+    });
+  }
+}
+buildList();
+selectProp(0);
+
+document.querySelectorAll('#modes button').forEach(b => b.onclick = () => {
+  viewMode = +b.dataset.m;
+  document.querySelectorAll('#modes button').forEach(x => x.classList.toggle('on', x === b));
+});
+window.addEventListener('keydown', e => {
+  if (e.key >= '1' && e.key <= '9') { const n = +e.key - 1; if (n < LOADED.length) selectProp(n); }
+  // 25 props no longer fit on the number row
+  if (e.key === 'ArrowRight' || e.key === 'n') selectProp((current + 1) % LOADED.length);
+  if (e.key === 'ArrowLeft' || e.key === 'p') selectProp((current + LOADED.length - 1) % LOADED.length);
+  if (e.key === 'l' || e.key === 'L') lightRun = !lightRun;
+  if (e.key === 'k' || e.key === 'K') {
+    // the atlases are baked with the look's wear and value folded in,
+    // so switching art direction means re-baking -- cheap enough
+    // (one triangle per region) to do for all 19 props on a keypress
+    LOOK = (LOOK === LOOKS.clean) ? LOOKS.derelict : LOOKS.clean;
+    for (let i = 0; i < LOADED.length; i++) {
+      const f = atlasFor(i);
+      for (const t of [LOADED[i].tex.texAR, LOADED[i].tex.texNM, LOADED[i].tex.texEM]) gl.deleteTexture(t);
+      LOADED[i].tex = bakeProp(f);
+    }
+    document.getElementById('look').textContent = (LOOK === LOOKS.clean) ? 'CLEAN' : 'DERELICT';
+  }
+  if (e.key === '[') lightEl = Math.max(0.05, lightEl - 0.08);
+  if (e.key === ']') lightEl = Math.min(1.3, lightEl + 0.08);
+});
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.classList.add('drag'); });
+window.addEventListener('mouseup', () => { dragging = false; canvas.classList.remove('drag'); });
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  az += (e.clientX - lastX) * 0.008;
+  el = Math.max(-1.35, Math.min(1.35, el + (e.clientY - lastY) * 0.008));
+  lastX = e.clientX; lastY = e.clientY;
+});
+canvas.addEventListener('wheel', e => {
+  dist = Math.max(0.3, Math.min(12, dist * (1 + e.deltaY * 0.001)));
+  e.preventDefault();
+}, { passive: false });
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+function frame(tms) {
+  const t = (tms || 0) * 0.001, dt = Math.min(0.1, t - lastT); lastT = t;
+  if (lightRun) lightAz += dt * 0.22;
+  const p = LOADED[current];
+  const maxSize = Math.max(...p.size);
+  const targetY = p.size[1] * 0.5;
+  const eye = [
+    Math.sin(az) * Math.cos(el) * dist,
+    targetY + Math.sin(el) * dist,
+    Math.cos(az) * Math.cos(el) * dist,
+  ];
+  // lights scale with the prop: a hand-sized crate and a 5 m tree get
+  // the same light-to-size geometry and the same exposure
+  const R = maxSize * 1.15 + 0.6, S = R * R;
+  const keyPos = [Math.sin(lightAz) * Math.cos(lightEl) * R, targetY + Math.sin(lightEl) * R, Math.cos(lightAz) * Math.cos(lightEl) * R];
+  const fillPos = [-Math.sin(lightAz + 0.5) * R * 1.3, targetY * 0.7 + 0.30 * R, -Math.cos(lightAz + 0.5) * R * 1.3];
+  // rim from high and behind: separates a pale shell from a pale wall,
+  // which a two-light rig cannot do
+  const rimPos = [-Math.sin(lightAz - 1.9) * R * 1.2, targetY + R * 1.25, -Math.cos(lightAz - 1.9) * R * 1.2];
+  const mul = (c, i) => [c[0] * i * S, c[1] * i * S, c[2] * i * S];
+  const keyCol = mul(LOOK.key, LOOK.keyI), fillCol = mul(LOOK.fill, LOOK.fillI), rimCol = mul(LOOK.rim, LOOK.rimI);
+
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(LOOK.bg[0], LOOK.bg[1], LOOK.bg[2], 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const proj = mPersp(50 * Math.PI / 180, canvas.width / canvas.height, 0.05, 60);
+  const view = mLookAt(eye, [0, targetY, 0], [0, 1, 0]);
+  const vp = mMul(proj, view);
+
+  gl.useProgram(flatProg);
+  gl.uniformMatrix4fv(flatU.uMVP, false, vp);
+  gl.uniform3f(flatU.uKeyPos, ...keyPos); gl.uniform3f(flatU.uKeyCol, ...keyCol);
+  gl.uniform3f(flatU.uFillPos, ...fillPos); gl.uniform3f(flatU.uFillCol, ...fillCol);
+  gl.uniform3f(flatU.uSky, ...LOOK.sky); gl.uniform3f(flatU.uGnd, ...LOOK.gnd);
+  gl.uniform3f(flatU.uCamPos, eye[0], eye[1], eye[2]);
+  gl.uniform1f(flatU.uAmb, LOOK.amb);
+  gl.uniform1f(flatU.uFoot, Math.hypot(p.size[0], p.size[2]) * 0.5);
+  gl.uniform3f(flatU.uAlb, ...LOOK.floor);
+  gl.uniform1f(flatU.uRough, LOOK.floorRough);
+  gl.uniform3f(flatU.uN, 0, 1, 0);
+  gl.bindVertexArray(floorMesh.vao); gl.drawArrays(gl.TRIANGLES, 0, floorMesh.count);
+  gl.uniform3f(flatU.uAlb, LOOK.floor[0] * 3.2, LOOK.floor[1] * 3.2, LOOK.floor[2] * 3.2);
+  gl.uniform1f(flatU.uRough, 0.85);
+  gl.uniform3f(flatU.uN, 0, 0, 1);
+  gl.bindVertexArray(wallMesh.vao); gl.drawArrays(gl.TRIANGLES, 0, wallMesh.count);
+
+  gl.useProgram(dispProg);
+  gl.uniformMatrix4fv(dispU.uMVP, false, vp);
+  gl.uniformMatrix4fv(dispU.uModel, false, mIdent());
+  gl.uniform3f(dispU.uCamPos, eye[0], eye[1], eye[2]);
+  gl.uniform3f(dispU.uKeyPos, ...keyPos); gl.uniform3f(dispU.uKeyCol, ...keyCol);
+  gl.uniform3f(dispU.uFillPos, ...fillPos); gl.uniform3f(dispU.uFillCol, ...fillCol);
+  gl.uniform3f(dispU.uRimPos, ...rimPos); gl.uniform3f(dispU.uRimCol, ...rimCol);
+  gl.uniform3f(dispU.uSky, ...LOOK.sky); gl.uniform3f(dispU.uGnd, ...LOOK.gnd);
+  gl.uniform1f(dispU.uAmb, LOOK.amb);
+  gl.uniform1i(dispU.uViewMode, viewMode);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, p.tex.texAR); gl.uniform1i(dispU.uAR, 0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, p.tex.texNM); gl.uniform1i(dispU.uNM, 1);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, p.tex.texEM); gl.uniform1i(dispU.uEM, 2);
+  gl.bindVertexArray(p.mesh.vao);
+  gl.drawArrays(gl.TRIANGLES, 0, p.mesh.count);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+}  // end of the __PROPKIT_OK guard opened above the main script
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# python
+__pycache__/
+*.pyc
+
+# editor / os
+.DS_Store
+Thumbs.db
+
+# editor state
+.serena/

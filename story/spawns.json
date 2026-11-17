@@ -1,0 +1,876 @@
+{
+  "encounters": [
+    {
+      "id": "E-01",
+      "area": "C-03",
+      "trigger": "event:E01_zone && flag_has_pistol",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 1,
+              "method": "CRACK",
+              "pos": [
+                312,
+                318
+              ]
+            }
+          ]
+        },
+        {
+          "t": 1.5,
+          "units": [
+            {
+              "type": "M1",
+              "n": 1,
+              "method": "CRACK",
+              "pos": [
+                326,
+                340
+              ]
+            }
+          ]
+        }
+      ],
+      "on_clear": [
+        "say:L-013"
+      ]
+    },
+    {
+      "id": "E-02",
+      "area": "R-LBY",
+      "trigger": "event:enter_R-LBY first",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 1,
+              "method": "COCOON",
+              "pos": [
+                386,
+                498
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "VENT",
+              "pos": [
+                350,
+                412
+              ]
+            }
+          ]
+        }
+      ],
+      "on_clear": [
+        "say:L-014"
+      ]
+    },
+    {
+      "id": "E-03",
+      "area": "C-13",
+      "trigger": "event:enter_C-13 first",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "VENT",
+              "pos": [
+                300,
+                556
+              ]
+            }
+          ]
+        },
+        {
+          "t": 6,
+          "units": [
+            {
+              "type": "M1",
+              "n": 1,
+              "method": "VENT",
+              "pos": [
+                300,
+                614
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E-04",
+      "area": "R-SUP",
+      "trigger": "event:pickup_W2",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRATE",
+              "pos": [
+                240,
+                690
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "method": "CEILING",
+              "pos": [
+                296,
+                648
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E-05",
+      "area": "R-ENG",
+      "trigger": "event:enter_R-ENG first",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRACK",
+              "pos": [
+                230,
+                860
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRACK",
+              "pos": [
+                300,
+                930
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "method": "CEILING",
+              "pos": [
+                420,
+                850
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E-06",
+      "area": "R-ENG",
+      "trigger": "event:pickup_PACK-1",
+      "blackout": true,
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRACK",
+              "pos": [
+                250,
+                890
+              ]
+            }
+          ]
+        },
+        {
+          "t": 8,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRACK",
+              "pos": [
+                420,
+                880
+              ]
+            }
+          ]
+        },
+        {
+          "t": 16,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CHASE",
+              "pos": [
+                211,
+                800
+              ]
+            }
+          ]
+        }
+      ],
+      "on_clear": [
+        "spawn_item:E06-BOX",
+        "spawn_item:HK-09"
+      ],
+      "after": {
+        "chase": {
+          "type": "M1",
+          "n": 3,
+          "until": "enter_R-SUP"
+        }
+      }
+    },
+    {
+      "id": "E-07",
+      "area": "R-MSS",
+      "trigger": "event:enter_R-MSS first",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M4",
+              "n": 1,
+              "method": "COCOON",
+              "pos": [
+                445,
+                358
+              ]
+            },
+            {
+              "type": "M4",
+              "n": 1,
+              "method": "COCOON",
+              "pos": [
+                475,
+                360
+              ]
+            },
+            {
+              "type": "M4",
+              "n": 1,
+              "method": "COCOON",
+              "pos": [
+                505,
+                356
+              ]
+            }
+          ],
+          "note": "cocoons pre-placed; each yields M1 up to total 4"
+        },
+        {
+          "t": 3,
+          "units": [
+            {
+              "type": "M3",
+              "n": 1,
+              "method": "WALLBREAK",
+              "pos": [
+                500,
+                302
+              ],
+              "lead_s": 3
+            }
+          ]
+        }
+      ],
+      "on_clear": []
+    },
+    {
+      "id": "E-07b",
+      "area": "C-07",
+      "trigger": "event:enter_C-07",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M2",
+              "n": 1,
+              "method": "CEILING",
+              "pos": [
+                475,
+                258
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E-08",
+      "area": "R-MNT",
+      "trigger": "event:pickup_PACK-2",
+      "foam": {
+        "vis_m": 5,
+        "fill_s": 3
+      },
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRATE",
+              "pos": [
+                440,
+                162
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRATE",
+              "pos": [
+                440,
+                202
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 1,
+              "method": "VENT",
+              "pos": [
+                480,
+                138
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "method": "CEILING",
+              "pos": [
+                520,
+                150
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "method": "CEILING",
+              "pos": [
+                520,
+                215
+              ]
+            }
+          ]
+        }
+      ],
+      "on_clear": [
+        "say:L-028"
+      ]
+    },
+    {
+      "id": "E-09",
+      "area": "C-04",
+      "trigger": "event:enter_C-04 && flag_shortcut_open",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 3,
+              "method": "CHASE",
+              "pos": [
+                464,
+                262
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E-09b",
+      "area": "C-09",
+      "trigger": "event:enter_C-09 first",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M2",
+              "n": 1,
+              "method": "CEILING",
+              "pos": [
+                498,
+                540
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "method": "CEILING",
+              "pos": [
+                498,
+                600
+              ]
+            }
+          ]
+        },
+        {
+          "t": 4,
+          "units": [
+            {
+              "type": "M1",
+              "n": 2,
+              "method": "CRACK",
+              "pos": [
+                490,
+                570
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "E-10",
+      "area": "R-CGO",
+      "trigger": "event:pickup_PACK-3",
+      "waves": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 3,
+              "method": "CRACK",
+              "pos": [
+                424,
+                700
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 3,
+              "method": "CRACK",
+              "pos": [
+                424,
+                824
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 3,
+              "method": "CRACK",
+              "pos": [
+                526,
+                700
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 3,
+              "method": "CRACK",
+              "pos": [
+                526,
+                824
+              ]
+            }
+          ]
+        },
+        {
+          "t": 14,
+          "or_when_remaining_le": 3,
+          "units": [
+            {
+              "type": "M1",
+              "n": 4,
+              "method": "VENT",
+              "pos": [
+                470,
+                690
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 2,
+              "method": "CEILING",
+              "pos": [
+                524,
+                744
+              ]
+            }
+          ]
+        },
+        {
+          "t": 28,
+          "or_when_remaining_le": 2,
+          "units": [
+            {
+              "type": "M1",
+              "n": 5,
+              "method": "VENT",
+              "pos": [
+                470,
+                690
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 3,
+              "method": "CEILING",
+              "pos": [
+                524,
+                744
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 3,
+              "method": "CRACK",
+              "pos": [
+                424,
+                760
+              ]
+            }
+          ]
+        },
+        {
+          "t": 44,
+          "or_when_remaining_le": 2,
+          "units": [
+            {
+              "type": "M3",
+              "n": 2,
+              "method": "WALLBREAK",
+              "pos": [
+                420,
+                760
+              ],
+              "lead_s": 3
+            },
+            {
+              "type": "M1",
+              "n": 5,
+              "method": "CRACK",
+              "pos": [
+                526,
+                700
+              ]
+            },
+            {
+              "type": "M1",
+              "n": 4,
+              "method": "CRACK",
+              "pos": [
+                424,
+                824
+              ]
+            }
+          ]
+        },
+        {
+          "t": 60,
+          "or_when_remaining_le": 2,
+          "units": [
+            {
+              "type": "M1",
+              "n": 5,
+              "method": "VENT",
+              "pos": [
+                470,
+                760
+              ]
+            },
+            {
+              "type": "M2",
+              "n": 2,
+              "method": "CEILING",
+              "pos": [
+                470,
+                800
+              ]
+            }
+          ]
+        }
+      ],
+      "on_clear": [
+        "spawn_item:E10-BOX-A",
+        "spawn_item:E10-BOX-B",
+        "open:duct",
+        "say:L-035"
+      ]
+    },
+    {
+      "id": "E-11",
+      "area": "return_route",
+      "trigger": "event:duct_landing",
+      "chase_stream": {
+        "type": "M1",
+        "total": 18,
+        "interval_s": 3.0,
+        "behind_player_m": 15,
+        "until": "enter_R-LBY"
+      }
+    },
+    {
+      "id": "E-12",
+      "area": "R-GAL",
+      "trigger": "flag_final_defense",
+      "entries": {
+        "A": [
+          203,
+          466
+        ],
+        "B": [
+          170,
+          428
+        ],
+        "C_ceiling": [
+          170,
+          428
+        ],
+        "D": [
+          160,
+          520
+        ],
+        "E": [
+          182,
+          556
+        ],
+        "F_ceiling": [
+          166,
+          578
+        ]
+      },
+      "schedule": [
+        {
+          "t": 0,
+          "units": [
+            {
+              "type": "M1",
+              "n": 8,
+              "entry": "A"
+            }
+          ]
+        },
+        {
+          "t": 6,
+          "units": [
+            {
+              "type": "M1",
+              "n": 6,
+              "entry": "B"
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "entry": "C_ceiling",
+              "static": true
+            }
+          ]
+        },
+        {
+          "t": 12,
+          "units": [
+            {
+              "type": "M1",
+              "n": 8,
+              "entry": "A"
+            },
+            {
+              "type": "M1",
+              "n": 4,
+              "entry": "D"
+            }
+          ]
+        },
+        {
+          "t": 19,
+          "units": [
+            {
+              "type": "M1",
+              "n": 6,
+              "entry": "A"
+            },
+            {
+              "type": "M3",
+              "n": 1,
+              "entry": "A"
+            }
+          ]
+        },
+        {
+          "t": 25,
+          "units": [
+            {
+              "type": "M1",
+              "n": 7,
+              "entry": "A"
+            },
+            {
+              "type": "M1",
+              "n": 5,
+              "entry": "B"
+            },
+            {
+              "type": "M2",
+              "n": 2,
+              "entry": "C_ceiling",
+              "static": true
+            }
+          ]
+        },
+        {
+          "t": 32,
+          "units": [
+            {
+              "type": "M1",
+              "n": 8,
+              "entry": "D"
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "entry": "F_ceiling",
+              "static": true
+            }
+          ]
+        },
+        {
+          "t": 38,
+          "units": [
+            {
+              "type": "M3",
+              "n": 2,
+              "entry": "A"
+            },
+            {
+              "type": "M1",
+              "n": 7,
+              "entry": "A"
+            }
+          ]
+        },
+        {
+          "t": 45,
+          "units": [
+            {
+              "type": "M1",
+              "n": 6,
+              "entry": "E"
+            },
+            {
+              "type": "M1",
+              "n": 6,
+              "entry": "B"
+            },
+            {
+              "type": "M2",
+              "n": 2,
+              "entry": "C_ceiling",
+              "static": true
+            }
+          ]
+        },
+        {
+          "t": 52,
+          "units": [
+            {
+              "type": "M1",
+              "n": 8,
+              "entry": "A"
+            },
+            {
+              "type": "M1",
+              "n": 2,
+              "entry": "D"
+            }
+          ]
+        },
+        {
+          "t": 58,
+          "units": [
+            {
+              "type": "M3",
+              "n": 2,
+              "entry": "A"
+            },
+            {
+              "type": "M1",
+              "n": 6,
+              "entry": "E"
+            }
+          ]
+        },
+        {
+          "t": 65,
+          "units": [
+            {
+              "type": "M1",
+              "n": 7,
+              "entry": "A"
+            },
+            {
+              "type": "M1",
+              "n": 5,
+              "entry": "D"
+            },
+            {
+              "type": "M2",
+              "n": 1,
+              "entry": "F_ceiling",
+              "static": true
+            }
+          ]
+        },
+        {
+          "t": 72,
+          "units": [
+            {
+              "type": "M1",
+              "n": 8,
+              "entry": "B"
+            },
+            {
+              "type": "M1",
+              "n": 4,
+              "entry": "E"
+            }
+          ]
+        },
+        {
+          "t": 80,
+          "units": [
+            {
+              "type": "M1",
+              "n": 6,
+              "entry": "A"
+            },
+            {
+              "type": "M1",
+              "n": 6,
+              "entry": "D"
+            },
+            {
+              "type": "M3",
+              "n": 1,
+              "entry": "A"
+            }
+          ]
+        }
+      ],
+      "ends": "timer_launch==0 or player boarded"
+    }
+  ]
+}

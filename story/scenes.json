@@ -1,0 +1,325 @@
+{
+  "flags": [
+    "flag_intro_done",
+    "flag_has_pistol",
+    "flag_has_shotgun",
+    "flag_has_smg",
+    "flag_gallery_briefed",
+    "pack_state[1..3]:NOT_FOUND|CARRIED|INSTALLED",
+    "pack3_cracked",
+    "slot_charge[1..6]",
+    "sink_stage",
+    "lumi_mode",
+    "lumi_display",
+    "flag_shortcut_open",
+    "flag_final_defense",
+    "timer_launch",
+    "flag_epilogue_enabled"
+  ],
+  "initial": {
+    "slot_charge": [
+      100,
+      100,
+      100,
+      0,
+      0,
+      0
+    ],
+    "sink_stage": 0,
+    "player_hp": 10,
+    "flag_epilogue_enabled": true
+  },
+  "sink_stages": [
+    {
+      "stage": 0,
+      "tilt_deg": 0,
+      "lighting": "mostly_off_bluewhite_12pct"
+    },
+    {
+      "stage": 1,
+      "on": "install_slot4",
+      "tilt_deg": 2.5,
+      "lighting": "red_emergency",
+      "audio": "alarm_loop"
+    },
+    {
+      "stage": 2,
+      "on": "install_slot5",
+      "tilt_deg": 4.7,
+      "lighting": "red_plus_sparks",
+      "steam_vents": 5,
+      "rolling_props": true
+    },
+    {
+      "stage": 3,
+      "on": "install_slot6",
+      "tilt_deg": 7.5,
+      "lighting": "red_strobe",
+      "all_doors_open": true
+    }
+  ],
+  "movement_on_tilt": {
+    "uphill": -0.12,
+    "downhill": 0.08
+  },
+  "route_lock": {
+    "D-06,D-07": "pack1_installed",
+    "D-12": "pack2_installed",
+    "D-22": "gallery_briefed"
+  },
+  "checkpoints": [
+    {
+      "id": "CP-1",
+      "at": "door_opened_D-01"
+    },
+    {
+      "id": "CP-2",
+      "at": "gallery_briefed"
+    },
+    {
+      "id": "CP-3",
+      "at": "enter_R-ENG"
+    },
+    {
+      "id": "CP-4",
+      "at": "install_slot4"
+    },
+    {
+      "id": "CP-5",
+      "at": "enter_R-MNT"
+    },
+    {
+      "id": "CP-6",
+      "at": "install_slot5"
+    },
+    {
+      "id": "CP-7",
+      "at": "enter_R-CGO"
+    },
+    {
+      "id": "CP-8",
+      "at": "duct_landing"
+    },
+    {
+      "id": "CP-9",
+      "at": "lumi_docked"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "S0",
+      "room": "R-QTR",
+      "steps": [
+        "spawn player lying at [206,186], cam_h 0.35, roll 18, controls locked",
+        "lumi path [252,152]->[222,160] stop -> [206,172] face 0.9m",
+        "lumi.intro_sequence",
+        "say L-001..L-003",
+        "unlock look",
+        "say L-004",
+        "standup anim 2.5s cam 0.35->1.7",
+        "say L-005",
+        "lumi mode HUD, display VITALS hp10 bpm118",
+        "say L-006",
+        "highlight HK-00",
+        "on pickup_HK-00: hp80, bpm 118->94, say L-007",
+        "say L-008",
+        "lumi PANEL open D-01 (OPEN 2.2s)",
+        "say L-009",
+        "quest '루미를 따라간다'",
+        "checkpoint CP-1"
+      ]
+    },
+    {
+      "id": "S1",
+      "rooms": [
+        "C-01",
+        "C-02",
+        "J-1",
+        "C-03",
+        "C-17"
+      ],
+      "triggers": [
+        "enter_C-17 -> L-010",
+        "near_W1 -> L-011",
+        "pickup_W1 -> L-012, flag_has_pistol",
+        "zone y>310 in C-03 -> E-01"
+      ]
+    },
+    {
+      "id": "S2",
+      "room": "R-LBY",
+      "triggers": [
+        "enter -> E-02",
+        "use_info_terminal -> L-015 (optional)",
+        "quest '탈출 갤러리로 이동' target [181,530]"
+      ]
+    },
+    {
+      "id": "S3",
+      "room": "R-GAL",
+      "safe_zone": true,
+      "triggers": [
+        "enter -> lumi lights bays B1..B6 at 1.2s interval with L-016",
+        "chain L-017..L-020",
+        "flag_gallery_briefed",
+        "quest '에너지팩 회수 (0/3)' target [325,908]",
+        "checkpoint CP-2"
+      ]
+    },
+    {
+      "id": "S4",
+      "route": [
+        "R-LBY",
+        "D-22",
+        "C-13",
+        "R-SUP",
+        "C-14",
+        "J-2",
+        "C-15",
+        "C-16",
+        "R-ENG"
+      ],
+      "encounters": [
+        "E-03",
+        "E-04",
+        "E-05",
+        "E-06"
+      ],
+      "triggers": [
+        "enter_R-SUP -> L-021",
+        "enter_C-18 -> L-022",
+        "enter_R-ENG -> CP-3",
+        "near_PACK-1 -> L-023",
+        "pickup_PACK-1 -> blackout R-ENG 1.5s then flashlight on, E-06",
+        "quest '갤러리로 귀환' target [181,590]"
+      ]
+    },
+    {
+      "id": "S5",
+      "room": "R-GAL",
+      "triggers": [
+        "install_slot4 -> L-024,L-025, sink_stage 1, lumi self_charge 4s no dialogue, unlock D-06 D-07, CP-4",
+        "quest '정비 창고에서 에너지팩 회수' target [503,225]"
+      ]
+    },
+    {
+      "id": "S6",
+      "route": [
+        "R-LBY",
+        "C-05",
+        "C-06",
+        "R-MSS",
+        "C-07",
+        "R-MNT"
+      ],
+      "encounters": [
+        "E-07",
+        "E-07b",
+        "E-08",
+        "E-09"
+      ],
+      "triggers": [
+        "enter_R-MSS -> L-026, E-07",
+        "enter_R-MNT -> CP-5",
+        "pickup_PACK-2 -> foam, E-08, open SD-01, flag_shortcut_open",
+        "clear_E-08 -> L-028",
+        "enter_C-04 -> E-09"
+      ],
+      "return_route": [
+        "C-07",
+        "C-04",
+        "D-11",
+        "C-03",
+        "R-LBY",
+        "C-12",
+        "R-GAL"
+      ]
+    },
+    {
+      "id": "S7",
+      "room": "R-GAL",
+      "triggers": [
+        "install_slot5 -> L-029..L-031, sink_stage 2, unlock D-12, CP-6",
+        "quest '화물칸에서 마지막 에너지팩 회수' target [497,728]"
+      ]
+    },
+    {
+      "id": "S8",
+      "route": [
+        "R-LBY",
+        "R-MSS",
+        "C-08",
+        "R-MED",
+        "C-09",
+        "J-3",
+        "C-10",
+        "C-11",
+        "R-CGO"
+      ],
+      "encounters": [
+        "E-09b",
+        "E-10",
+        "E-11"
+      ],
+      "triggers": [
+        "enter_R-MED -> L-032 then 30s dialogue silence, no enemies",
+        "pickup_W3 -> L-033",
+        "enter_C-19 -> L-034",
+        "enter_R-CGO -> CP-7",
+        "pickup_PACK-3 -> E-10",
+        "clear_E-10 -> open duct, L-035",
+        "enter duct [445,822] -> 4s fall -> land [450,866]",
+        "duct_landing -> pack3_cracked, crack SFX + leak VFX, NO lumi dialogue, CP-8, E-11"
+      ],
+      "return_route": [
+        "R-ENG",
+        "C-16",
+        "C-15",
+        "J-2",
+        "C-14",
+        "R-SUP",
+        "C-13",
+        "R-LBY",
+        "C-12",
+        "R-GAL"
+      ]
+    },
+    {
+      "id": "S9",
+      "room": "R-GAL",
+      "triggers": [
+        "install_slot6 -> charge stops 51, alarm, L-036..L-038",
+        "lumi moves to dock [196,556] normal speed, no interact prompt, L-039,L-040",
+        "dock arrive -> L-041, sink_stage 3"
+      ]
+    },
+    {
+      "id": "S10",
+      "room": "R-GAL",
+      "triggers": [
+        "lumi OFF: light off, VITALS gone, doors all open",
+        "timer 90 start, L-042",
+        "E-12 schedule",
+        "timer 45 -> L-043",
+        "timer 20 -> L-044, board enabled at <=25",
+        "respawn boxes HK-R1 HK-R2 active",
+        "CP-9 at start"
+      ],
+      "fail": "player death or timer 0 without boarding -> restart at CP-9"
+    },
+    {
+      "id": "S11",
+      "triggers": [
+        "board capsule B6 -> hatch close, view of dock LED fading, L-045,L-046",
+        "launch 8s: ship silhouette, gallery light blinks 3x then off, silence, heartbeat only, credits"
+      ]
+    },
+    {
+      "id": "S12",
+      "optional": true,
+      "triggers": [
+        "if flag_epilogue_enabled after credits: radio noise, L-047, cut"
+      ]
+    }
+  ]
+}

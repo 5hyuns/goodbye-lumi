@@ -1,0 +1,61 @@
+{
+  "project": "GOODBYE LUMI",
+  "type": "native Win32 game (C99, OpenGL 3.3) + browser previz + stdlib Python/Node generators",
+  "size_cap_bytes": 1474560,
+  "detail": {
+    "files": "docs/FILEMAP.md",
+    "symbols": "docs/symbols.json (python tools/mkindex.py)",
+    "manual": "CLAUDE.md",
+    "lessons": "docs/engineering-notes.md"
+  },
+  "entry": {
+    "build": "sh native/build.sh [debug]",
+    "output": "native/build/playlumi.exe",
+    "process": "native/src/plat.c:WinMain",
+    "frame_and_flags": "native/src/game.c",
+    "previz": "src/derelict/map.html"
+  },
+  "modules": {
+    "platform": ["plat.c", "app.h", "gl33.c", "game.c", "menu.c", "shot.c", "m.h"],
+    "ship_build": ["level.c", "ship.h", "tex.c", "mesh.c", "kit.c", "kitparts.c", "kitwalls.c", "geom.c", "bake.c"],
+    "render": ["render.c", "torch.h", "atmos.c", "ent.c", "prim.c", "fx.c", "hud.c", "kfont.c"],
+    "world": ["vmw.c", "zom.c", "lumi.c", "lumimesh.c", "face.c", "doors.c", "props.c", "propkit.c", "audio.c"],
+    "story": ["story.c"],
+    "root": "native/src/"
+  },
+  "generated": {
+    "native/src/plan_data.h": {"by": "tools/nativepack.py", "from": "src/derelict/map.html"},
+    "native/src/story_data.h": {"by": "tools/storypack.py", "from": "story/*.json"},
+    "native/src/props_gen.c": {"by": "tools/propexport.js", "from": "props/props_v01/propkit.js"},
+    "native/src/props_glsl.h": {"by": "tools/propglsl.py", "from": "props/props_v01/propview.html"},
+    "native/src/jafont_data.h": {"by": "tools/jafont.py", "from": "Japanese strings in tree"},
+    "src/derelict/*.html": {"by": "previz chain"},
+    "tools/_*.js": {"by": "tools/build_ship.py, tools/deckmap.py"}
+  },
+  "previz_chain": ["build_ship.py", "splice.py", "weapons.py", "doors.py", "decals.py", "deckmap.py", "kitview.py (branch)"],
+  "hand_written_inputs": [
+    "ref/ship_deck_plan_v6_fixed.svg",
+    "src/sector-c/sector-c-containment.html",
+    "tools/*.py", "tools/kit.js", "tools/weapons.js", "tools/doors.js", "tools/decals.js",
+    "props/lumi_v02/lumi_geometry.js (frozen)",
+    "props/props_v01/propkit.js", "props/props_v01/propview.html",
+    "story/dialogue.json", "story/scenes.json", "story/spawns.json"
+  ],
+  "checks": {
+    "-vmw": "tools/vmwcheck.js",
+    "-lumimesh": "tools/lumicheck.js",
+    "-mats": "tools/matview.js",
+    "-wav": "tools/wavan.py",
+    "-shot": "tools/shot.js (previz)",
+    "-auto N -log": "self-play transcript",
+    "-probe x0,y0,x1,y1": "ASCII deck map"
+  },
+  "tests": "none; checks above compare exe against tools",
+  "deps": {
+    "runtime": ["GDI32", "KERNEL32", "msvcrt", "OPENGL32", "USER32", "WINMM"],
+    "build": "w64devkit gcc at C:\\w64devkit (not on PATH)",
+    "tools": "Python 3 stdlib, Node built-ins, Chrome"
+  },
+  "never_edit": ["src/derelict/*.html", "tools/_*.js", "native/src/*_data.h", "native/src/props_gen.c", "native/src/props_glsl.h"],
+  "archive": "archive/ (contest-era, unmaintained)"
+}

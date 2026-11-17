@@ -1,0 +1,230 @@
+"""nativepack.py -- the deck plan, compiled for the native build.
+
+THE PLAN IS DATA; EVERYTHING ELSE IS CODE.  map.html's LEVEL section is
+3,498 literal brush() calls, 300 quad() calls, 1,365 part placements and
+280 lamps -- the compiled output of deckplan.py -> build_ship.py ->
+deckmap.py, with no logic left in it.  Porting the *generator* to C would
+buy nothing: the SVG it reads is bigger than the brush list it produces.
+So the plan crosses over as a table, and the kit, the materials and the
+bake -- which really are code -- get ported instead.
+
+Reading it with a regex would be a second parser to keep in step with the
+first.  Instead the section is handed to node exactly as the browser gets
+it, with a dumper appended: whatever map.html means by BRUSHES is what
+lands in the header, by construction.
+
+  python tools/nativepack.py
+
+Writes native/src/plan_data.h.  ~145 KB of rodata: 84 KB of brushes,
+33 KB of placements, 17 KB of cut faces, 8 KB of lamps.
+"""
+import json, os, re, subprocess, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+MAP  = os.path.join(ROOT, 'src', 'derelict', 'map.html')
+OUT  = os.path.join(ROOT, 'native', 'src', 'plan_data.h')
+TMP  = os.path.join(HERE, '_nativepack_run.js')
+
+# the section runs from MATH to the end of ZONES -- the material compiler
+# that follows is code, and gets ported rather than dumped
+START = re.compile(r'^/\* =+\s*$')
+def section_bounds(lines, first_title, stop_title):
+    a = b = None
+    for i, ln in enumerate(lines):
+        if START.match(ln) and i + 1 < len(lines):
+            t = lines[i + 1].strip()
+            if a is None and t.startswith(first_title):
+                a = i
+            elif a is not None and t.startswith(stop_title):
+                b = i
+                break
+    return a, b
+
+
+DUMPER = r'''
+/* ---- the dumper -------------------------------------------------- */
+const out = {
+  brushes: BRUSHES,
+  faces:   FACES.map(f => [f[0],f[1],f[2],f[3],f[4],f[5]||0,f[6]||0]),
+  modules: (typeof MODULES!=='undefined') ? MODULES : [],
+  doors:   (typeof SHIP_DOORS!=='undefined') ? SHIP_DOORS : [],
+  lights:  LIGHTS.map(L => [L.p[0],L.p[1],L.p[2], L.c[0],L.c[1],L.c[2], L.r, L.noFix?1:0]),
+  zones:   ZONES.map(Z => [Z.n, Z.s, Z.x0, Z.x1, Z.z0, Z.z1, Z.c[0], Z.c[1], Z.c[2]]),
+  voidCube: VOID_CUBE,
+  matName: MAT_NAME,
+  /* Each instruction is [op, dst, ...args].  Trailing args are omitted rather
+     than defaulted, and runOp reads that omission -- so the LENGTH is part of
+     the instruction and travels with it. */
+  recipes: RECIPES.map(r => r.map(i => i.slice())),
+  metal:   METAL,
+  surf:    SURF,
+  bump:    BUMP_ST,
+  emisGain: EMIS_GAIN,
+};
+require('fs').writeFileSync(process.argv[2], JSON.stringify(out));
+'''
+
+
+def js_number(x):
+    """Emit a float that round-trips, without JS's trailing '.0' noise."""
+    if x == int(x) and abs(x) < 1e9:
+        return '%d' % int(x)
+    r = repr(float(x))
+    return r
+
+
+def c_floats(name, rows, per_row=None):
+    """A flat float array, one source line per logical row -- so a diff of
+    this header still reads as a diff of the plan."""
+    o = ['static const float %s[] = {' % name]
+    for r in rows:
+        o.append('  ' + ','.join(js_number(v) for v in r) + ',')
+    o.append('};')
+    return '\n'.join(o)
+
+
+def c_bytes(name, vals):
+    o = ['static const unsigned char %s[] = {' % name]
+    for i in range(0, len(vals), 24):
+        o.append('  ' + ','.join(str(int(v)) for v in vals[i:i + 24]) + ',')
+    o.append('};')
+    return '\n'.join(o)
+
+
+def c_str(s):
+    b = s.encode('utf-8')
+    return '"' + ''.join(
+        c if 32 <= ord(c) < 127 and c not in '"\\' else '\\%03o' % o
+        for c, o in ((chr(x), x) for x in b)) + '"'
+
+
+def main():
+    src = open(MAP, encoding='utf-8').read().split('\n')
+    a, b = section_bounds(src, '0.  MATH', '5.  RADIOSITY BAKE')
+    if a is None or b is None:
+        sys.exit('nativepack: could not find the LEVEL..LIGHTS span in map.html')
+    chunk = '\n'.join(src[a:b])
+    print('plan source: map.html lines %d..%d  (%d lines)' % (a + 1, b, b - a))
+
+    open(TMP, 'w', encoding='utf-8').write(chunk + DUMPER)
+    jsonpath = os.path.join(HERE, '_nativepack.json')
+    r = subprocess.run(['node', TMP, jsonpath], capture_output=True, text=True)
+    if r.returncode:
+        sys.exit('nativepack: node failed\n' + r.stderr[:4000])
+    d = json.load(open(jsonpath, encoding='utf-8'))
+    os.remove(TMP); os.remove(jsonpath)
+
+    br, fa, mo, dr, li, zo = (d['brushes'], d['faces'], d['modules'],
+                              d['doors'], d['lights'], d['zones'])
+    print('brushes %d  faces %d  modules %d  doors %d  lights %d  zones %d'
+          % (len(br), len(fa), len(mo), len(dr), len(li), len(zo)))
+    print('recipes %d materials, %d operators'
+          % (len(d['recipes']), sum(len(r) for r in d['recipes'])))
+
+    o = []
+    o.append('/* GENERATED by tools/nativepack.py -- do not edit.')
+    o.append('   The deck plan as the native build receives it: %d brushes,'
+             % len(br))
+    o.append('   %d cut faces, %d part placements, %d doors, %d lamps, %d zones.'
+             % (len(fa), len(mo), len(dr), len(li), len(zo)))
+    o.append('   Source: src/derelict/map.html, LEVEL and LIGHTS. */')
+    o.append('#ifndef PLAN_DATA_H')
+    o.append('#define PLAN_DATA_H')
+    o.append('')
+    o.append('#define PLAN_NBRUSH %d' % len(br))
+    o.append('#define PLAN_NFACE  %d' % len(fa))
+    o.append('#define PLAN_NMOD   %d' % len(mo))
+    o.append('#define PLAN_NDOOR  %d' % len(dr))
+    o.append('#define PLAN_NLIGHT %d' % len(li))
+    o.append('#define PLAN_NZONE  %d' % len(zo))
+    o.append('')
+
+    # brushes: 6 floats + tex + clip, split so the bulk stays float-aligned
+    o.append('/* x0 y0 z0 x1 y1 z1, one brush per line */')
+    o.append(c_floats('PLAN_BRUSH', [b[:6] for b in br]))
+    o.append(c_bytes('PLAN_BRUSH_T', [b[6] for b in br]))
+    o.append(c_bytes('PLAN_BRUSH_C', [b[7] for b in br]))
+    o.append('')
+
+    o.append('/* c0 c1 c2 c3 (12 floats), then uo wo */')
+    o.append(c_floats('PLAN_FACE', [f[0] + f[1] + f[2] + f[3] + [f[5], f[6]]
+                                    for f in fa]))
+    o.append(c_bytes('PLAN_FACE_T', [f[4] for f in fa]))
+    o.append('')
+
+    o.append('/* x y z yaw arg, one placement per line */')
+    o.append(c_floats('PLAN_MOD', [[m[1], m[2], m[3], m[4], m[5]] for m in mo]))
+    o.append(c_bytes('PLAN_MOD_K', [m[0] for m in mo]))
+    o.append(c_bytes('PLAN_MOD_T', [m[6] for m in mo]))
+    o.append('')
+
+    o.append('/* x z w d */')
+    o.append(c_floats('PLAN_DOOR', [[x['x'], x['z'], x['w'], x['d']] for x in dr]))
+    o.append(c_bytes('PLAN_DOOR_AX', [x['ax'] for x in dr]))
+    o.append('')
+
+    o.append('/* px py pz  r g b  radius */')
+    o.append(c_floats('PLAN_LIGHT', [l[:7] for l in li]))
+    o.append(c_bytes('PLAN_LIGHT_FIX', [l[7] for l in li]))
+    o.append('')
+
+    o.append('/* x0 x1 z0 z1  cx cy cz */')
+    o.append(c_floats('PLAN_ZONE', [z[2:9] for z in zo]))
+    o.append('static const char *const PLAN_ZONE_N[] = {')
+    for z in zo:
+        o.append('  %s,' % c_str(z[0]))
+    o.append('};')
+    o.append('static const char *const PLAN_ZONE_S[] = {')
+    for z in zo:
+        o.append('  %s,' % c_str(z[1]))
+    o.append('};')
+    o.append('')
+    o.append('static const float PLAN_VOID_CUBE[3] = {%s};'
+             % ','.join(js_number(v) for v in d['voidCube']))
+    o.append('')
+    o.append('#define PLAN_NMAT %d' % len(d['matName']))
+    o.append('static const char *const PLAN_MAT_NAME[] = {')
+    for n in d['matName']:
+        o.append('  %s,' % c_str(n))
+    o.append('};')
+    o.append('')
+    # ---- the material recipes -------------------------------------
+    rec = d['recipes']
+    flat, off = [], [0]
+    for r in rec:
+        for ins in r:
+            flat.append(len(ins) + 1)      # the count includes itself
+            flat.extend(ins)
+        off.append(len(flat))
+    o.append('/* Material recipes.  Register contract:')
+    o.append('     R0 albedo . R1 height . R2 roughness . R3 emissive . R4-7 scratch')
+    o.append('   Layout: [n, op, dst, args...] back to back, n counting itself,')
+    o.append('   so an omitted trailing argument stays omitted. */')
+    o.append('#define RECIPE_WORDS %d' % len(flat))
+    o.append('static const float RECIPE_OPS[] = {')
+    for i in range(0, len(flat), 12):
+        o.append('  ' + ','.join(js_number(v) for v in flat[i:i + 12]) + ',')
+    o.append('};')
+    o.append('static const int RECIPE_OFF[] = {%s};'
+             % ','.join(str(v) for v in off))
+    o.append('#define RECIPE_TOTAL_OPS %d' % sum(len(r) for r in rec))
+    o.append('')
+    o.append('static const float MAT_METAL_T[] = {%s};'
+             % ','.join(js_number(v) for v in d['metal']))
+    o.append('static const int MAT_SURF_T[] = {%s};'
+             % ','.join(str(int(v)) for v in d['surf']))
+    o.append('static const float MAT_BUMP_T[] = {%s};'
+             % ','.join(js_number(v) for v in d['bump']))
+    o.append('#define EMIS_GAIN %sf' % js_number(d['emisGain']))
+    o.append('')
+    o.append('#endif')
+
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    open(OUT, 'w', encoding='utf-8').write('\n'.join(o) + '\n')
+    print('wrote %s  (%s bytes)' % (os.path.relpath(OUT, ROOT),
+                                    f'{os.path.getsize(OUT):,}'))
+
+
+if __name__ == '__main__':
+    main()

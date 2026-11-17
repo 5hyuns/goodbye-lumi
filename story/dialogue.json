@@ -1,0 +1,547 @@
+{
+  "rules": {
+    "speaker": "루미",
+    "chars_per_sec": 9,
+    "tail_pad_s": 0.6,
+    "max_chars_per_line": 42,
+    "max_lines": 2,
+    "block_during_combat": true,
+    "queue_when_blocked": true,
+    "display_restore": "VITALS after 0.5s",
+    "chain": "'chain' trigger = play immediately after previous line ends",
+    "combat_exceptions": [
+      "L-023",
+      "L-041",
+      "L-042",
+      "L-043",
+      "L-044",
+      "L-045",
+      "L-046"
+    ],
+    "one_shot": true,
+    "idle_bark_after_silence_s": 60,
+    "en_note": "English is a table beside the Korean, never a substitute for it: the story was written in Korean and the Korean is the one that has been timed against SL_CPS.",
+    "ja_note": "Japanese is a third table, not a substitute: the story was written in Korean and SL_CPS still times the subtitle off the Korean cell count. Re-run tools/jafont.py after touching any of these -- the exe carries only the glyphs they use."
+  },
+  "lines": [
+    {
+      "id": "L-001",
+      "trigger": "event:intro_recognize",
+      "text": "47구역에 도움이 필요한 인간을 확인했습니다. 비상 구조 임무를 시행합니다.",
+      "display": "HEARTBEAT>EYES_TALK",
+      "priority": "story",
+      "en": "Human requiring assistance located in Sector 47. Beginning emergency rescue protocol.",
+      "ja": "47区域に支援の必要な人間を確認しました。緊急救助任務を開始します。"
+    },
+    {
+      "id": "L-002",
+      "trigger": "chain",
+      "text": "반갑습니다. 저는 루미입니다. 함선 정비 유닛입니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Hello. I am LUMI. Ship maintenance unit.",
+      "ja": "はじめまして。私はルミです。船舶整備ユニットです。"
+    },
+    {
+      "id": "L-003",
+      "trigger": "chain",
+      "text": "아직 탈출하지 못한 인원을 찾았습니다. …340일 만입니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "I have found someone who did not evacuate. …The first in 340 days.",
+      "ja": "まだ脱出していない人員を発見しました。…340日ぶりです。"
+    },
+    {
+      "id": "L-004",
+      "trigger": "event:intro_controls_unlocked",
+      "text": "일어나실 수 있나요? 천천히 하셔도 됩니다. 아, 정정합니다. 천천히는 곤란합니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Can you stand? Take your time. Correction: please do not take your time.",
+      "ja": "立てますか。ゆっくりで構いません。あ、訂正します。ゆっくりは困ります。"
+    },
+    {
+      "id": "L-005",
+      "trigger": "event:intro_standup_done",
+      "text": "우선 체력을 확인하겠습니다. 실례하겠습니다.",
+      "display": "SCAN>VITALS",
+      "priority": "story",
+      "en": "Checking your vitals first. Excuse me.",
+      "ja": "まず体力を確認します。失礼します。"
+    },
+    {
+      "id": "L-006",
+      "trigger": "event:lumi_hud_attached",
+      "text": "현재 체력 10%입니다. 앞에 있는 응급 키트로 회복하세요. 제 표시를 보시면 됩니다.",
+      "display": "VITALS",
+      "priority": "story",
+      "en": "Vitals at 10%. Use the medkit ahead of you. Follow my marker.",
+      "ja": "現在の体力は10%です。前方の応急キットで回復してください。私の表示に従ってください。"
+    },
+    {
+      "id": "L-007",
+      "trigger": "event:pickup_HK-00",
+      "text": "80%. 맥박 94회로 안정. 좋습니다. 이 정도면 걸을 수 있습니다.",
+      "display": "VITALS",
+      "priority": "story",
+      "en": "80%. Pulse 94 and steady. Good. That will walk.",
+      "ja": "80%。脈拍94で安定。良好です。これなら歩けます。"
+    },
+    {
+      "id": "L-008",
+      "trigger": "event:intro_move_start",
+      "text": "이 함선은 현재 생명체가 있기에 적합하지 않습니다. 승무원은… 더 이상 탑승해 있지 않습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "This vessel is not currently fit for living things. The crew are… no longer aboard.",
+      "ja": "この船は現在、生命体の滞在に適していません。乗員は…もう乗っていません。"
+    },
+    {
+      "id": "L-009",
+      "trigger": "event:door_opened_D-01",
+      "text": "규정 7조에 따라, 저의 임무는 당신을 탈출시키는 것입니다. 문은 제가 엽니다. 그게 제 특기입니다.",
+      "display": "OPEN>EYES_TALK",
+      "priority": "story",
+      "en": "Under Article 7, my duty is to get you off this ship. I open the doors. It is what I am good at.",
+      "ja": "規定第7条により、私の任務はあなたを脱出させることです。扉は私が開きます。それが私の得意分野です。"
+    },
+    {
+      "id": "L-010",
+      "trigger": "event:enter_C-17",
+      "text": "그 통로는 187일 전에 붕괴했습니다. 끝까지 가실 필요는 없는데… 인간은 확인해야 직성이 풀린다고 기록되어 있습니다. 다녀오세요.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "That passage collapsed 187 days ago. You need not walk to the end — but the record says humans have to see for themselves. Go ahead.",
+      "ja": "その通路は187日前に崩落しました。最後まで行く必要はありませんが…人間は自分の目で確かめないと気が済まないと記録にあります。どうぞ。"
+    },
+    {
+      "id": "L-011",
+      "trigger": "event:near_W1",
+      "text": "보안 로커입니다. 승무원의 것이었지만, 이제 소유권을 주장할 분이 없습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "A security locker. It belonged to a crew member. Nobody is left to claim it.",
+      "ja": "保安ロッカーです。乗員のものでしたが、今は所有権を主張する方がいません。"
+    },
+    {
+      "id": "L-012",
+      "trigger": "event:pickup_W1",
+      "text": "이 함선에는 거미형 생물이 다수 서식 중입니다. 정확한 개체수는 세다가 중단했습니다. 총은 장전되어 있을 때만 총입니다.",
+      "display": "WARN",
+      "priority": "story",
+      "en": "This ship hosts a large population of spider-form organisms. I stopped counting. A gun is only a gun while it is loaded.",
+      "ja": "この船には蜘蛛型の生物が多数生息しています。正確な個体数は数えるのをやめました。銃は装填されている間だけ銃です。"
+    },
+    {
+      "id": "L-013",
+      "trigger": "event:clear_E-01",
+      "text": "두 개체 무력화. 명중률 양호합니다. 인간의 반사신경은 기록보다 우수하군요.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Two neutralised. Accuracy acceptable. Human reflexes exceed the record.",
+      "ja": "二個体、無力化。命中率は良好です。人間の反射神経は記録より優秀ですね。"
+    },
+    {
+      "id": "L-014",
+      "trigger": "event:clear_E-02",
+      "text": "중앙 로비입니다. 함선의 교차점이고, 그래서 가장 자주 지나야 하는 곳입니다. 유감스럽게도.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "The central lobby. Every route crosses here, which is why you will keep coming back. Regrettably.",
+      "ja": "中央ロビーです。船の交差点であり、だから最も頻繁に通る場所です。残念ながら。"
+    },
+    {
+      "id": "L-015",
+      "trigger": "event:use_info_terminal",
+      "text": "조회합니다… 생존 승무원 0명. 구조 신호 발신 실패 340일째. 외래 생물 잠식률 추정 89%. 더 읽으시겠습니까? 권하지는 않습니다.",
+      "display": "SCAN",
+      "priority": "story",
+      "en": "Querying… surviving crew: zero. Distress beacon failed 340 days. Estimated infestation: 89%. Shall I go on? I would not.",
+      "ja": "照会します…生存乗員0名。救難信号の発信失敗340日目。外来生物の浸食率は推定89%。続けますか。お勧めはしません。"
+    },
+    {
+      "id": "L-016",
+      "trigger": "event:reach_capsule",
+      "text": "사출 베이 1번… 비었습니다. 2번… 비었습니다. 3번, 4번, 5번… 6번. 남아 있습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Launch bay one… empty. Two… empty. Three, four, five… six. Six is still there.",
+      "ja": "射出ベイ1番…空です。2番…空です。3番、4番、5番…6番。残っています。"
+    },
+    {
+      "id": "L-017",
+      "trigger": "chain",
+      "text": "좋은 소식입니다. 캡슐이 한 대 남아 있습니다. 나쁜 소식도 드릴까요? 사출 에너지가 부족합니다. 슬롯 여섯 개 중 세 개만 충전되어 있습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Good news: one capsule remains. Shall I give you the bad news? Launch power is short. Three of its six slots are charged.",
+      "ja": "良い知らせです。カプセルが1台残っています。悪い知らせも要りますか。射出エネルギーが不足しています。6つのスロットのうち3つしか充電されていません。"
+    },
+    {
+      "id": "L-018",
+      "trigger": "chain",
+      "text": "함선 기록 조회 결과, 표준 규격 에너지 코어 세 개가 남아 있습니다. 기관실, 정비 창고, 화물칸입니다. 참고로 저도 같은 규격의 코어로 구동됩니다. 함선 표준은 편리하죠.",
+      "display": "SCAN",
+      "priority": "story",
+      "en": "Ship records list three standard energy cores remaining. Engine room, maintenance store, cargo hold. For reference, I run on the same standard. Ship-standard parts are convenient.",
+      "ja": "船の記録を照会した結果、標準規格のエネルギーコアが3つ残っています。機関室、整備倉庫、貨物室です。ちなみに私も同じ規格のコアで駆動します。船内標準は便利ですね。"
+    },
+    {
+      "id": "L-019",
+      "trigger": "chain",
+      "text": "계획은 이렇습니다. 당신이 가져오고, 제가 문을 열고 길을 비춥니다. …그들은 오래 굶주렸습니다. 항상 조심하세요.",
+      "display": "WARN",
+      "priority": "story",
+      "en": "The plan: you fetch, I open the doors and light the way. …They have gone hungry a long time. Stay careful.",
+      "ja": "計画はこうです。あなたが取ってくる、私が扉を開けて道を照らす。…彼らは長く飢えています。常に注意してください。"
+    },
+    {
+      "id": "L-020",
+      "trigger": "chain",
+      "text": "다시 말씀드립니다. 저의 임무는 당신을 탈출시키는 것입니다. 첫 번째 목적지는 기관실입니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "To repeat: my duty is to get you off this ship. First destination, the engine room.",
+      "ja": "もう一度申し上げます。私の任務はあなたを脱出させることです。最初の目的地は機関室です。"
+    },
+    {
+      "id": "L-021",
+      "trigger": "event:enter_R-SUP first",
+      "text": "보급 창고입니다. 탄약을 챙기세요. 거치대에 산탄총이 있습니다. 근거리에서는 그쪽이 정확합니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "The supply store. Take ammunition. There is a shotgun on the rack. At close range it is the honest choice.",
+      "ja": "補給倉庫です。弾薬を確保してください。ラックに散弾銃があります。近距離ならそちらが正確です。"
+    },
+    {
+      "id": "L-022",
+      "trigger": "event:enter_C-18",
+      "text": "그쪽은 붕괴 구역입니다. 다만 승무원들이 물자를 자주 숨겨두던 위치이기도 합니다. 판단은 맡기겠습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "That is a collapse zone. It is also where the crew liked to hide supplies. Your call.",
+      "ja": "そちらは崩落区域です。ただし乗員がよく物資を隠していた場所でもあります。判断はお任せします。"
+    },
+    {
+      "id": "L-023",
+      "trigger": "event:pickup_PACK-1",
+      "text": "코어 1번, 회수 확인. 이 구역 조명이 전부 내려갑니다. 놀라지 마십시오. 예정된 일입니다.",
+      "display": "WARN",
+      "priority": "story",
+      "en": "Core one, recovered. Every light in this section is going out now. Do not be alarmed — this is expected.",
+      "ja": "コア1番、回収確認。この区域の照明が全て落ちます。驚かないでください。予定通りです。"
+    },
+    {
+      "id": "L-024",
+      "trigger": "event:install_slot4",
+      "text": "슬롯 4번, 충전 확인. 남은 슬롯 두 개.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Slot four charged. Two slots remaining.",
+      "ja": "スロット4番、充電確認。残りスロット2つ。"
+    },
+    {
+      "id": "L-025",
+      "trigger": "chain",
+      "text": "함선이 비상 모드로 전환됩니다. 구역별로 조명이 내려가고 적색 경광등만 남습니다. 나빠진 게 아니라, 원래 나빴던 게 보이게 된 것뿐입니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "The ship is switching to emergency mode. The lighting drops section by section and only the red beacons stay. Nothing got worse — you can simply see how bad it was.",
+      "ja": "船が非常モードに切り替わります。区域ごとに照明が落ち、赤色の警告灯だけが残ります。悪化したのではなく、元から悪かったものが見えるようになっただけです。"
+    },
+    {
+      "id": "L-026",
+      "trigger": "event:enter_R-MSS first",
+      "text": "식당이었습니다. …과거형입니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "This was the mess hall. …Past tense.",
+      "ja": "食堂でした。…過去形です。"
+    },
+    {
+      "id": "L-027",
+      "trigger": "event:killed_adult",
+      "text": "방금 그거, 성체였습니다. 저 크기가 되려면 상당히 많이 먹어야 합니다. 그 이상은 말씀드리지 않겠습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "That one was an adult. Reaching that size takes a great deal of eating. I will say no more.",
+      "ja": "今のは成体です。あの大きさになるにはかなり食べる必要があります。それ以上は申し上げません。"
+    },
+    {
+      "id": "L-028",
+      "trigger": "event:clear_E-08",
+      "text": "서쪽 격벽이 파손으로 개방됐습니다. 지름길입니다. 함선이 부서지는 속도가 가끔은 도움이 됩니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "The west bulkhead has failed open. That is a shortcut. Sometimes the ship falling apart is useful.",
+      "ja": "西側の隔壁が破損して開いています。近道です。船が壊れる速度が役に立つこともあります。"
+    },
+    {
+      "id": "L-029",
+      "trigger": "event:install_slot5",
+      "text": "슬롯 5번, 충전 확인. 남은 슬롯 하나.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Slot five charged. One slot remaining.",
+      "ja": "スロット5番、充電確認。残りスロット1つ。"
+    },
+    {
+      "id": "L-030",
+      "trigger": "chain",
+      "text": "선체 기울기 4.7도. 걷기에 지장은 없습니다. 기분에는 지장이 있겠지만요.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Hull inclination 4.7 degrees. It will not affect your walking. It will affect your mood.",
+      "ja": "船体の傾斜4.7度。歩行に支障はありません。気分には支障があるでしょうが。"
+    },
+    {
+      "id": "L-031",
+      "trigger": "chain",
+      "text": "하나 남았습니다. 화물칸입니다. 가장 넓고, 가장 어둡고, 가장… 붐빕니다. 저의 임무는 당신을 탈출시키는 것입니다. 거의 다 왔습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "One left. The cargo hold. The largest, the darkest, and the most… crowded. My duty is to get you off this ship. We are nearly there.",
+      "ja": "残り1つです。貨物室です。最も広く、最も暗く、最も…混み合っています。私の任務はあなたを脱出させることです。もう少しです。"
+    },
+    {
+      "id": "L-032",
+      "trigger": "event:enter_R-MED first",
+      "text": "의무실입니다. …지나가겠습니다. 여기서 드릴 말씀은 없습니다.",
+      "display": "EYES_IDLE",
+      "priority": "story",
+      "en": "The medical bay. …Let us keep moving. I have nothing to say here.",
+      "ja": "医務室です。…通過します。ここで申し上げることはありません。"
+    },
+    {
+      "id": "L-033",
+      "trigger": "event:pickup_W3",
+      "text": "기관총입니다. 탄이 빨리 없어집니다. 아껴 쓰시라는 말은 하지 않겠습니다. 곧 필요할 겁니다.",
+      "display": "WARN",
+      "priority": "story",
+      "en": "A rotary cannon. It empties fast. I will not tell you to save your ammunition. You will need it shortly.",
+      "ja": "機関砲です。弾がすぐ無くなります。節約しろとは言いません。すぐに必要になります。"
+    },
+    {
+      "id": "L-034",
+      "trigger": "event:enter_C-19",
+      "text": "그 너머는 감압됐습니다. 문은 열리지 않습니다. 다만 이쪽 캐시는 살아 있습니다. 이번엔 챙기시는 걸 권합니다.",
+      "display": "WARN",
+      "priority": "story",
+      "en": "Beyond that is decompressed. The door will not open. The cache on this side is intact. I recommend taking it this time.",
+      "ja": "その先は減圧しています。扉は開きません。ただしこちら側の物資は無事です。今回は持って行くことをお勧めします。"
+    },
+    {
+      "id": "L-035",
+      "trigger": "event:clear_E-10",
+      "text": "회수 확인. 덕트로 내려가세요. 기관실 지붕으로 떨어집니다. 착지는… 인간의 무릎을 신뢰하겠습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Recovered. Take the duct down. It drops onto the engine room roof. The landing… I shall trust human knees.",
+      "ja": "回収確認。ダクトから降りてください。機関室の屋根に落ちます。着地は…人間の膝を信頼します。"
+    },
+    {
+      "id": "L-036",
+      "trigger": "event:install_slot6",
+      "text": "슬롯 6번… 충전율 51%에서 정지. 코어 외벽에 균열. 낙하 충격으로 추정됩니다.",
+      "display": "SCAN>WARN",
+      "priority": "story",
+      "en": "Slot six… stalled at 51%. There is a crack in the core casing. From the fall, I estimate.",
+      "ja": "スロット6番…充電率51%で停止。コア外壁に亀裂。落下の衝撃と推定されます。"
+    },
+    {
+      "id": "L-037",
+      "trigger": "chain",
+      "text": "계산합니다. 사출 필요량까지 49% 부족. 함선 내 표준 규격 코어 잔여 1개. 위치… 현재 위치입니다. 접니다.",
+      "display": "SCAN",
+      "priority": "story",
+      "en": "Calculating. Launch threshold short by 49%. Ship-standard cores remaining: one. Location… this location. Me.",
+      "ja": "計算します。射出必要量まで49%不足。船内の標準規格コア残り1つ。位置は…現在位置です。私です。"
+    },
+    {
+      "id": "L-038",
+      "trigger": "chain",
+      "text": "제 코어를 도킹하겠습니다. 규격이 같으니 문제없습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "I will dock my own core. The standard matches. There is no problem.",
+      "ja": "私のコアをドッキングします。規格が同じなので問題ありません。"
+    },
+    {
+      "id": "L-039",
+      "trigger": "event:lumi_dock_move_start",
+      "text": "기동부터 사출까지 90초입니다. 참고로 제가 문 제어를 놓으면 전 구역 격벽이 개방됩니다. 시끄러워질 겁니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Ninety seconds from ignition to launch. For reference, when I release door control every bulkhead in the ship opens. It will get loud.",
+      "ja": "起動から射出まで90秒です。ちなみに私が扉の制御を手放すと、全区域の隔壁が開きます。うるさくなります。"
+    },
+    {
+      "id": "L-040",
+      "trigger": "chain",
+      "text": "도킹 후에는 이동할 수 없습니다. 저의 임무는 당신을 탈출시키는 것이고, 이 방법이 가장 확실합니다. 그러니 저의 임무는 여기까지입니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Once docked I cannot move again. My duty is to get you off this ship, and this is the certain way. So my duty ends here.",
+      "ja": "ドッキング後は移動できません。私の任務はあなたを脱出させることであり、この方法が最も確実です。ですから私の任務はここまでです。"
+    },
+    {
+      "id": "L-041",
+      "trigger": "event:lumi_dock_arrive",
+      "text": "캡슐에 타세요. 90초는 제가 세겠습니다. 숫자 세는 건 제 특기니까요.",
+      "display": "EYES_TALK>OFF",
+      "priority": "story",
+      "en": "Get in the capsule. I will count the ninety seconds. Counting is what I am good at.",
+      "ja": "カプセルに乗ってください。90秒は私が数えます。数を数えるのは得意ですから。"
+    },
+    {
+      "id": "L-042",
+      "trigger": "event:timer_start",
+      "text": "90… 89… 88…",
+      "display": "SPEAKER",
+      "priority": "story",
+      "en": "Ninety… eighty-nine… eighty-eight…",
+      "ja": "90…89…88…"
+    },
+    {
+      "id": "L-043",
+      "trigger": "event:timer_45",
+      "text": "잘하고 계십니다. 맥박이 빠르지만, 정상 범위입니다.",
+      "display": "SPEAKER",
+      "priority": "story",
+      "en": "You are doing well. Your pulse is fast, but within range.",
+      "ja": "よくやっています。脈拍は速いですが、正常範囲です。"
+    },
+    {
+      "id": "L-044",
+      "trigger": "event:timer_20",
+      "text": "20… 19… 탑승하세요. 지금.",
+      "display": "SPEAKER",
+      "priority": "story",
+      "en": "Twenty… nineteen… board now. Now.",
+      "ja": "20…19…搭乗してください。今すぐ。"
+    },
+    {
+      "id": "L-045",
+      "trigger": "event:capsule_hatch_closed",
+      "text": "사출 3초 전. 2. 1.",
+      "display": "SPEAKER",
+      "priority": "story",
+      "en": "Launch in three. Two. One.",
+      "ja": "射出3秒前。2。1。"
+    },
+    {
+      "id": "L-046",
+      "trigger": "chain",
+      "text": "…안녕. 반가웠습니다.",
+      "display": "SPEAKER",
+      "priority": "story",
+      "en": "…Goodbye. It was good to meet you.",
+      "ja": "…さようなら。お会いできてよかったです。"
+    },
+    {
+      "id": "L-047",
+      "trigger": "event:epilogue",
+      "text": "(지지직) 캡슐 내부 심박 확인. 분당 84회. 안정적입니다. …다행입니다.",
+      "display": "RADIO",
+      "priority": "story",
+      "en": "(static) Cabin pulse confirmed. Eighty-four a minute. Steady. …That is a relief.",
+      "ja": "(ザザッ) カプセル内の心拍を確認。毎分84回。安定しています。…よかった。"
+    },
+    {
+      "id": "L-047A",
+      "trigger": "chain",
+      "text": "제 임무는 여기까지입니다. 남은 전력을 회수하고 셧다운하겠습니다.",
+      "display": "RADIO",
+      "priority": "story",
+      "en": "My task ends here. I will recover the last of my power and shut down.",
+      "ja": "私の任務はここまでです。残りの電力を回収してシャットダウンします。"
+    },
+    {
+      "id": "L-047B",
+      "trigger": "chain",
+      "text": "…안녕히 가세요. 반가웠습니다, 승무원.",
+      "display": "RADIO",
+      "priority": "story",
+      "en": "…Goodbye. It was good to meet you, crew.",
+      "ja": "…お元気で。お会いできてよかったです、乗員。"
+    },
+    {
+      "id": "L-048",
+      "trigger": "event:hint_light",
+      "text": "함선 조명은 대부분 사망했습니다. 어두우면 F 키를 눌러 라이트를 켜세요.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "Most of the ship's lighting is dead. Press F for your light when it is dark.",
+      "ja": "船の照明はほとんど死んでいます。暗いときはFキーでライトを点けてください。"
+    },
+    {
+      "id": "L-049",
+      "trigger": "chain",
+      "text": "어둠 속에 개체가 숨어 있을 수 있습니다. 비추면서 이동하시길 권합니다.",
+      "display": "WARN",
+      "priority": "story",
+      "en": "Organisms may be waiting in the dark. I recommend moving with the light on.",
+      "ja": "暗闇に個体が潜んでいる可能性があります。照らしながら移動することをお勧めします。"
+    },
+    {
+      "id": "L-050",
+      "trigger": "event:hint_marker",
+      "text": "화면 위쪽 나침반이 목적지를 가리킵니다. 도착 지점에는 표식 원이 있습니다.",
+      "display": "EYES_TALK",
+      "priority": "story",
+      "en": "The compass at the top of your view points to the objective. The arrival point is marked with a ring.",
+      "ja": "画面上部の羅針盤が目的地を指します。到着地点には標識の輪があります。"
+    },
+    {
+      "id": "L-051",
+      "trigger": "chain",
+      "text": "제가 앞서 가겠습니다. 교전이 시작되면 옆에 붙어 체력을 표시하겠습니다.",
+      "display": "VITALS",
+      "priority": "story",
+      "en": "I will lead. When a fight starts I will move to your side and show your vitals.",
+      "ja": "私が先導します。交戦が始まったら横について体力を表示します。"
+    }
+  ],
+  "idle_barks": [
+    {
+      "id": "V-01",
+      "text": "벽의 라이트 스트립이 청백색이면 정상, 적색이면 비상입니다. 지금은 청백색이 12% 남았습니다.",
+      "priority": "low",
+      "display": "EYES_TALK",
+      "en": "A blue-white light strip is normal, red is emergency. Twelve per cent of the blue-white is left.",
+      "ja": "壁のライトストリップが青白色なら正常、赤色なら非常です。今は青白色が12%残っています。"
+    },
+    {
+      "id": "V-02",
+      "text": "맥박 확인 중입니다. 습관입니다.",
+      "priority": "low",
+      "display": "EYES_TALK",
+      "en": "Checking your pulse. It is a habit.",
+      "ja": "脈拍を確認しています。習慣です。"
+    },
+    {
+      "id": "V-03",
+      "text": "이 구역의 산소 농도는 아직 괜찮습니다. 아직은요.",
+      "priority": "low",
+      "display": "EYES_TALK",
+      "en": "Oxygen in this section is still acceptable. Still.",
+      "ja": "この区域の酸素濃度はまだ問題ありません。まだ、ですが。"
+    },
+    {
+      "id": "V-04",
+      "text": "제 배터리는 걱정하지 않으셔도 됩니다. 함선 표준 규격이라 어디서든 충전됩니다.",
+      "priority": "low",
+      "display": "EYES_TALK",
+      "en": "You need not worry about my battery. Ship standard — it charges anywhere.",
+      "ja": "私のバッテリーは心配しなくて結構です。船内標準規格なのでどこでも充電できます。"
+    },
+    {
+      "id": "V-05",
+      "text": "저 소리는 선체가 우는 소리입니다. 은유가 아니라 금속 피로음입니다.",
+      "priority": "low",
+      "display": "EYES_TALK",
+      "en": "That sound is the hull crying. Not a metaphor. Metal fatigue.",
+      "ja": "あの音は船体が泣く音です。比喩ではなく金属疲労音です。"
+    }
+  ]
+}
